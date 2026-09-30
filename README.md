@@ -44,7 +44,8 @@ Kilka zasad, które zawsze obowiązują:
 - **Reguły forum mają pierwszeństwo.** Post, który Discourse i tak wstrzymałby sam (np.
   od nowego użytkownika, ze słowem z listy obserwowanych słów, w kategorii wymagającej
   zatwierdzenia), czeka na moderatora jak zawsze; werdykt Minos jest wtedy tylko
-  podpowiedzią w notatce.
+  podpowiedzią w notatce. Dotyczy to także `fail-open`: taki post nigdy nie jest
+  publikowany bez oceny.
 - **Zmiana w kolejce.** Jeśli moderator zmieni treść posta w kolejce, zanim przyjdzie
   werdykt, werdykt dotyczy już innego tekstu — post czeka na decyzję moderatora.
 - **Maskowanie tylko pewne.** Jeśli zamaskowanych fragmentów nie da się bezpiecznie
@@ -117,11 +118,21 @@ tekstu. O tym, co wtedy, decyduje `minos_failure_mode`:
   dlaczego nie został oceniony. Nic nieocenionego nie trafia na forum samo, ale przy
   dłuższej awarii kolejka rośnie.
 - **`fail-open`** — post zostaje opublikowany bez oceny (z notatką w historii zgłoszenia).
-  Forum działa płynnie, ale w czasie awarii nic nie jest moderowane.
+  Forum działa płynnie, ale w czasie awarii nic nie jest moderowane. Wyjątek: post, który
+  Discourse wstrzymał sam, albo który moderator zmienił w kolejce, zawsze czeka na
+  moderatora.
+
+Jeśli werdykt dla posta opublikowanego w ten sposób jednak przyjdzie później, wtyczka go
+stosuje: przy `zablokowane` post zostaje **ukryty** (moderator może go przywrócić), przy
+`ocenzurowane` fragmenty zostają zamaskowane w opublikowanym poście (albo post zostaje
+ukryty, jeśli tak każe `minos_censored_action` albo maskowania nie da się nanieść), a przy
+`bezpieczne` nic się nie zmienia. Jeśli w międzyczasie ktoś już zajął się postem (edycja,
+ukrycie, usunięcie, rozpatrzona flaga), jego decyzja zostaje.
 
 To samo ustawienie decyduje o postach dłuższych niż 3000 znaków: brama ocenia tylko ich
 początek, więc przy `fail-closed` taki post (jeśli nie został zablokowany) czeka na
-moderatora, a przy `fail-open` jest publikowany według werdyktu dla początku.
+moderatora, a przy `fail-open` jest publikowany według werdyktu dla początku. Post, którego
+początek wymagał maskowania (`ocenzurowane`), zawsze czeka na moderatora — w obu trybach.
 
 Chwilowe przeciążenie bramy (odpowiedzi 429 i 503) nie jest awarią: wtyczka ponawia
 wysyłkę po czasie, który poda brama, a bez niego po 1, 2, 4… minutach.
@@ -129,28 +140,51 @@ wysyłkę po czasie, który poda brama, a bez niego po 1, 2, 4… minutach.
 Wyłączenie wtyczki niczego nie publikuje ani nie usuwa: wstrzymane posty zostają w
 kolejce przeglądu dla moderatorów.
 
+## Limit żądań Discourse a dostawy werdyktów
+
+Discourse ogranicza liczbę żądań z jednego adresu IP: domyślnie 50 na 10 sekund i 200 na
+minutę, w trybie `block`. Wszystkie dostawy werdyktów przychodzą z adresów bramy, więc
+liczą się do tego limitu. Przy nagłym wysypie postów część dostaw dostanie odpowiedź 429;
+brama ponawia je sama (po 5, 10, 20… sekundach, przez 15 minut), więc zwykle nic nie
+ginie — werdykt przychodzi tylko później. Na dużym forum, gdzie w ciągu 10 sekund może
+powstać więcej niż kilkadziesiąt postów, podnieś limit w `containers/app.yml`, w sekcji
+`env`, i przebuduj kontener:
+
+```yaml
+env:
+  DISCOURSE_MAX_REQS_PER_IP_PER_10_SECONDS: 100
+  DISCOURSE_MAX_REQS_PER_IP_PER_MINUTE: 400
+```
+
+Werdykt, który mimo ponowień nie dotrze w czasie `minos_timeout_minutes`, trafia do
+ustawienia `minos_failure_mode`.
+
 ## Co wtyczka wysyła, a czego nigdy
 
 Do bramy trafia, dla każdego wstrzymanego posta:
 
-- **identyfikator** `discourse:<numer zgłoszenia w kolejce>` — bez żadnej treści;
+- **identyfikator** `discourse:<numer zgłoszenia w kolejce>.<numer próby>` — bez żadnej
+  treści; każda ponowna wysyłka ma własny numer, a werdykt dla wcześniejszej próby jest
+  pomijany;
 - **tekst**: tytuł nowego tematu (jeśli to nowy temat), pusty wiersz i treść posta.
   Z Markdownu usuwane są tylko znaczniki (np. `**`, `[quote]`, składnia linków i
-  obrazków), a zostaje każde słowo, które czytelnik może zobaczyć — także w cytatach,
-  spoilerach i podsumowaniach sekcji zwijanych, żeby nie dało się niczego w nich ukryć.
-  Wysyłane jest **pierwsze 3000 znaków** (limit bramy);
+  obrazków), a zostaje każde słowo, które czytelnik może zobaczyć — także w cytatach
+  (razem z nazwą pokazaną w nagłówku cytatu), spoilerach, podsumowaniach sekcji
+  zwijanych, tekstach alternatywnych i tytułach obrazków, żeby nie dało się niczego w
+  nich ukryć. Wysyłane jest **pierwsze 3000 znaków** (limit bramy);
 - **profil** z ustawienia `minos_profile`;
-- **dwa sygnały antyspamowe**: liczba linków w poście i to, czy to pierwszy post autora.
+- **sygnały antyspamowe**: liczba linków w poście, to, czy to pierwszy post autora, oraz
+  do 10 domen, do których prowadzą linki i obrazki (np. `example.com`, bez reszty adresu).
 
-Wtyczka **nigdy** nie wysyła adresu e-mail, adresu IP, identyfikatora ani nazwy
-użytkownika, ani wiadomości prywatnych. Klucz trafia wyłącznie do nagłówka żądania do
+Wtyczka **nigdy** nie wysyła danych autora — adresu e-mail, adresu IP, identyfikatora ani
+nazwy użytkownika — ani wiadomości prywatnych. Klucz trafia wyłącznie do nagłówka żądania do
 bramy; ani klucz, ani sekret nie są zapisywane w logach ani pokazywane na stronach. W
 logach Discourse wtyczka zapisuje tylko numer zgłoszenia, status HTTP i kod błędu bramy.
 
-Stan każdego wstrzymanego posta (czasy, próby, werdykt bez zamaskowanego tekstu, a po
-opublikowaniu z maskowaniem także oryginalna treść) wtyczka trzyma w bazie forum i usuwa
-po 30 dniach. Oryginalna treść posta opublikowanego z maskowaniem zostaje też dla
-moderatorów w historii zgłoszenia.
+Stan każdego wstrzymanego posta (czasy, próby, werdykt bez zamaskowanego tekstu i skrót
+kryptograficzny treści, nigdy sama treść) wtyczka trzyma w bazie forum i usuwa po 30
+dniach. Oryginalna treść posta opublikowanego z maskowaniem zostaje dla moderatorów tylko
+w historii zgłoszenia albo w historii edycji posta.
 
 ## Dla programistów
 

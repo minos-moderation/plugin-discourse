@@ -35,28 +35,40 @@ Every Discourse touch point sits in a thin class (`settings.rb`, `store.rb`,
    Discourse would hold it anyway (then `core_hold` is recorded and the verdict is only a
    note). It skips a disabled plugin, staff (`minos_skip_staff`), bots and personal
    messages. `Submission.enqueue` creates the entry and enqueues `Jobs::MinosSubmit`.
-2. `Submission#run` claims the entry (`queued` → `sending`) under `Store.lock`, reduces the
-   post with `Text.for_submission` (title, blank line, Markdown reduced to plain text,
-   first 3000 characters), stores the digest, builds the body with `Scores.request_body`
-   and POSTs it with `GatewayClient` over `FinalDestination::HTTP`. `Scores.classify`
-   reads the answer: `202` → `submitted`; `429`/`503`/`408`/`5xx`/no answer → `queued`
-   again with `retry_at` (`ponow_za_s`, or 60 s doubling to 15 minutes) and an
-   `enqueue_in`; anything else → a configuration problem for the dashboard and the
-   failure mode.
+2. `Submission#run` claims the entry (`queued` → `sending`) under `Store.lock` and numbers
+   the attempt, reduces the post with `Text.for_submission` (title, blank line, Markdown
+   reduced to plain text — quote names, image alt texts and titles kept — first 3000
+   characters), stores the digest, builds the body with `Scores.request_body` (item id
+   `discourse:<reviewable id>.<attempt>`, `links`, `author_first_post`, and
+   `link_domains` from `Text.link_hosts` reduced with `PublicSuffix.domain`) and POSTs it
+   with `GatewayClient` over `FinalDestination::HTTP`. `Scores.classify` reads the answer:
+   `202` → `submitted`; `429`/`503`/`408`/`5xx`/no answer → `queued` again with
+   `retry_at` (`ponow_za_s`, or 60 s doubling to 15 minutes) and an `enqueue_in`;
+   anything else → a configuration problem for the dashboard and the failure mode.
 3. The webhook verifies and parses the delivery; `Receiver` moves a waiting entry to
-   `received` with the verdict and enqueues `Jobs::MinosApplyVerdict`; a repeat or a
-   foreign id is dropped with a 200.
+   `received` with the verdict and enqueues `Jobs::MinosApplyVerdict`. Only the current
+   attempt's id is taken; a repeat, an earlier attempt or a foreign id is dropped with a
+   200.
 4. `VerdictApplier#apply_verdict` asks `Decision.for_verdict` what to do and does it
    through the reviewable: `perform(system user, :approve_post)`, `update_fields` of the
    queued `raw` (and `title`) followed by `:approve_post`, `:reject_post`, or nothing. A
    `ReviewableNote` records the outcome. The entry ends `done`.
-5. `Sweep` applies `Decision.for_entry` to every entry: the failure mode after
+5. The failure mode (`Decision.for_failure`) never publishes a post Discourse held itself
+   or a moderator edited. When it publishes one (fail-open), the entry ends
+   `auto_published` with the post's id, and a verdict that still arrives goes through
+   `Decision.for_late_verdict`: `keep`, `mask` (`PostRevisor#revise!` as the system user)
+   or `hide` (`Post#hide!`) — unless a person acted on the post since (deleted, hid,
+   edited it, or reviewed a flag on it), whose decision stays.
+6. `Sweep` applies `Decision.for_entry` to every entry: the failure mode after
    `minos_timeout_minutes`, a resubmission of a due retry or of a send stuck for 2 min, a
-   second application of a verdict whose job was lost after 2 min, and removal of a
-   `done` entry after 30 days.
+   second application of a verdict whose job was lost after 2 min, giving up (a note, the
+   post left) on a verdict that could not be applied for 24 h, and removal of a `done` or
+   `auto_published` entry after 30 days.
 
 State lives in `PluginStore` (`minos-moderation`, key `pending:<reviewable id>`, plus
-`problem`); see `Store` for the fields. Every read-modify-write of an entry runs under a
+`problem`); see `Store` for the fields. It never holds the unmasked text of a masked post
+(a digest at most): the reviewable's history and the post's revisions keep it where
+Discourse's own permissions guard it. Every read-modify-write of an entry runs under a
 `DistributedMutex` per reviewable, so the job, the webhook and the sweeper never apply
 two outcomes to one post.
 
@@ -175,6 +187,13 @@ Verified in Discourse's source (`main`, September 2026) or in
 - `Jobs::Base` (`sidekiq_options`), `Jobs::Scheduled` + `every`, `Jobs.enqueue`,
   `Jobs.enqueue_in`;
 - `FinalDestination::HTTP` (Net::HTTP with SSRF checks and pinned addresses);
+- `Post#hide!(post_action_type_id)` with `PostActionType.types[:inappropriate]` (it
+  also messages the author and hides a first post's topic), `Post.with_deleted`,
+  `Post#version`, `PostRevisor#revise!(editor, fields, skip_validations:, bypass_bump:,
+  bypass_rate_limiter:)` with an `edit_reason`, `ReviewableFlaggedPost` statuses;
+- the per-IP limits `max_reqs_per_ip_per_10_seconds` (50), `max_reqs_per_ip_per_minute`
+  (200) and `max_reqs_per_ip_mode` (`block`) in `config/discourse_defaults.conf`;
+- `public_suffix` in Discourse's `Gemfile.lock` (through `addressable`);
 - `ApplicationController` filters `verify_authenticity_token`, `check_xhr`,
   `redirect_to_login_if_required`, `preload_json`, and `requires_plugin`;
 - spec helpers `fab!`, `expect_enqueued_with`, `track_log_messages`, the
@@ -183,9 +202,11 @@ Verified in Discourse's source (`main`, September 2026) or in
 - the reusable CI workflow `discourse/.github/.github/workflows/discourse-plugin.yml@v1`
   and its inputs `name` and `skip_linting`.
 
-Not verified (no Discourse checkout here; the Discourse tier has not run yet):
+Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 
-- that the Discourse-tier specs pass as written — the first CI run is their first run;
+- that the Discourse-tier specs added after the first CI run pass as written;
+- `PublicSuffix.domain` is called as the gem documents it (nil for an invalid name); the
+  plugin sends no `link_domains` when the constant is missing;
 - the exact oldest Discourse version with every API above (`ReviewableNote` in
   particular is recent; `VerdictApplier` skips notes when it is missing, and
   `plugin.rb` registers the problem check only when `register_problem_check` exists).
@@ -201,7 +222,12 @@ Not verified (no Discourse checkout here; the Discourse tier has not run yet):
   that does not map exactly leaves the post to the moderators; it never publishes.
 - Edits of published posts are not sent; only new posts and new topics are.
 - A long post is assessed on its first 3000 characters; the failure mode decides
-  whether the rest may be published unassessed.
+  whether the rest may be published unassessed, except after an `ocenzurowane` head,
+  which always waits for a moderator.
+- Hiding a published post on a late verdict uses Discourse's own hiding, which sends the
+  author Discourse's standard "post hidden" message.
+- Every gateway delivery counts against Discourse's per-IP request limit; bursts get 429
+  and rely on the gateway's retries (README, "Limit żądań").
 - `wsparcie` on a published post is a note on a resolved review item, which moderators
   see only in its history; a more visible alert is a follow-up.
 - Configuration errors reach the admin dashboard through a problem check; on a
