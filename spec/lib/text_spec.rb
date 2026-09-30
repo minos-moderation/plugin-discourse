@@ -1,0 +1,192 @@
+# frozen_string_literal: true
+
+require_relative "../../lib/minos_moderation/text" unless defined?(MinosModeration::Text)
+
+# What the gateway is sent for a post, and how its masks come back onto the Markdown.
+# Every sample is invented; no real post appears here.
+RSpec.describe "MinosModeration::Text" do
+  subject(:text) { MinosModeration::Text }
+
+  let(:mask) { MinosModeration::Text::MASK }
+
+  describe "the text that is sent" do
+    it "keeps every word a reader sees and drops only markup" do
+      raw = <<~MD
+        # Nagłówek
+
+        Zwykły **pogrubiony** i ~~skreślony~~ tekst z `kodem`.
+        > cytowana linia
+        [quote="ktos, post:1, topic:2"]
+        cytowane słowa
+        [/quote]
+        [details="Podsumowanie"]
+        ukryta treść
+        [/details]
+        [spoiler]tajemnica[/spoiler] <!-- komentarz -->
+        [opis](https://example.test/a) i ![alt obrazka|690x388](upload://abc.png)
+        ```ruby
+        puts 1
+        ```
+      MD
+      sent = text.for_submission(raw)[:text]
+      %w[
+        Nagłówek pogrubiony skreślony kodem cytowana cytowane Podsumowanie ukryta tajemnica
+        komentarz opis https://example.test/a obrazka puts
+      ].each { |word| expect(sent).to include(word) }
+      markup = ["**", "~~", "`", "[quote", "[/details]", "![", "<!--", "ktos", "upload://", "```"]
+      markup.each { |token| expect(sent).not_to include(token) }
+    end
+
+    it "sends HTML as it is, attributes included, so nothing hides in them" do
+      raw = %(<span title="ukryty tytuł">widoczny</span>)
+      expect(text.for_submission(raw)[:text]).to eq(raw)
+    end
+
+    it "sends the raw text of a post that is markup only, rather than nothing" do
+      raw = "![](upload://abc.png)"
+      expect(text.for_submission(raw)[:text]).to eq(raw)
+    end
+
+    it "sends nothing for a post without any text" do
+      expect(text.for_submission(" \n\t ")[:text]).to eq("")
+      expect(text.for_submission(nil)[:text]).to eq("")
+    end
+
+    it "cuts the text to its first 3000 characters, counting characters and not bytes" do
+      raw = "ż" * 2999 + "ab" + "c" * 50
+      sent = text.for_submission(raw)
+      expect(sent[:text].length).to eq(3000)
+      expect(sent[:text]).to eq("ż" * 2999 + "a")
+      expect(sent[:truncated]).to be(true)
+    end
+
+    it "does not call a text of exactly 3000 characters truncated" do
+      sent = text.for_submission("a" * 3000)
+      expect(sent[:text].length).to eq(3000)
+      expect(sent[:truncated]).to be(false)
+    end
+
+    it "trims the text, also at the cut" do
+      raw = "  #{"a" * 2998}  \n  b"
+      expect(text.for_submission(raw)[:text]).to eq("a" * 2998)
+    end
+
+    it "gives the same digest to the same text and another to another" do
+      a = text.for_submission("pierwszy tekst")
+      expect(text.for_submission("pierwszy tekst\r\n")[:digest]).to eq(a[:digest])
+      expect(text.for_submission("drugi tekst")[:digest]).not_to eq(a[:digest])
+    end
+
+    it "reads invalid UTF-8 without raising" do
+      expect(text.for_submission("zły \xFF bajt".b)[:text]).to include("zły")
+    end
+  end
+
+  describe "the links signal" do
+    it "counts the links in the raw text" do
+      raw = "a https://a.test/x [b](http://b.test) ![c](upload://c.png) www.d.test"
+      expect(text.link_count(raw)).to eq(2)
+      expect(text.link_count(nil)).to eq(0)
+    end
+  end
+
+  describe "carrying masks back onto the Markdown" do
+    def verdict_for(raw, word)
+      sent = text.for_submission(raw)[:text]
+      [sent, sent.gsub(word) { mask * word.length }]
+    end
+
+    it "masks exactly the masked characters of a plain post" do
+      raw = "to jest głupi pomysł, głupi"
+      sent, masked = verdict_for(raw, "głupi")
+      expect(text.apply_masks(raw, sent, masked)).to eq(masked)
+    end
+
+    it "masks a word inside Markdown and keeps the markup around it" do
+      raw = "# Tytuł\r\n\r\nTo jest **głupi** pomysł, [link](https://example.test)"
+      sent, masked = verdict_for(raw, "głupi")
+      result = text.apply_masks(raw, sent, masked)
+      expect(result).to eq(raw.sub("głupi", mask * 5))
+    end
+
+    it "masks a word that markup splits in two" do
+      raw = "gł**upi** tekst"
+      sent, masked = verdict_for(raw, "głupi")
+      expect(text.apply_masks(raw, sent, masked)).to eq("#{mask * 2}**#{mask * 3}** tekst")
+    end
+
+    it "masks only the occurrence the gateway masked" do
+      raw = "kot i kot"
+      sent = text.for_submission(raw)[:text]
+      masked = "#{mask * 3} i kot"
+      expect(text.apply_masks(raw, sent, masked)).to eq(masked)
+    end
+
+    it "masks inside the assessed beginning of a truncated post" do
+      raw = "zły " + "a" * 3100
+      sent = text.for_submission(raw)[:text]
+      masked = "#{mask * 3}#{sent[3..]}"
+      result = text.apply_masks(raw, sent, masked)
+      expect(result).to start_with("#{mask * 3} a")
+      expect(result.length).to eq(raw.length)
+    end
+
+    it "refuses a mask on a character the reduction made up" do
+      raw = "[opis](https://example.test)"
+      sent = text.for_submission(raw)[:text]
+      masked = sent.sub(" ", mask)
+      expect(text.apply_masks(raw, sent, masked)).to be_nil
+    end
+
+    it "refuses a change that is not a mask" do
+      raw = "to jest tekst"
+      sent = text.for_submission(raw)[:text]
+      expect(text.apply_masks(raw, sent, sent.sub("tekst", "TEKST"))).to be_nil
+    end
+
+    it "refuses masks of another length" do
+      raw = "to jest tekst"
+      sent = text.for_submission(raw)[:text]
+      expect(text.apply_masks(raw, sent, "#{sent}#{mask}")).to be_nil
+    end
+
+    it "refuses when the post no longer reads as the text that was sent" do
+      sent, masked = verdict_for("to jest głupi pomysł", "głupi")
+      expect(text.apply_masks("to jest inny pomysł", sent, masked)).to be_nil
+    end
+
+    it "refuses what is not text" do
+      expect(text.apply_masks("a", "a", nil)).to be_nil
+      expect(text.apply_masks(nil, "a", mask)).to be_nil
+    end
+
+    it "leaves the post as it is when nothing was masked" do
+      raw = "**nic** tu nie ma"
+      sent = text.for_submission(raw)[:text]
+      expect(text.apply_masks(raw, sent, sent)).to eq(raw)
+    end
+
+    it "always produces Markdown whose sent text carries every mask of the verdict" do
+      samples = [
+        "a **b** c", "> cytat z **tym** słowem\n\nakapit", "[x](https://e.test) y **z**",
+        "gł**up**i i ~~głupi~~", "# nagłówek\n\n* lista\n* **punkt**", "`kod` i kod",
+      ]
+      checked = 0
+      samples.each do |raw|
+        sent = text.for_submission(raw)[:text]
+        sent.each_char.with_index do |char, index|
+          next if char.match?(/\s/)
+
+          masked = sent.dup
+          masked[index] = mask
+          result = text.apply_masks(raw, sent, masked)
+          next if result.nil?
+
+          checked += 1
+          expect(text.for_submission(result)[:text][index]).to eq(mask), "#{raw.inspect} @#{index}"
+        end
+      end
+      expect(checked).to be > 30, "almost every mask was refused: the property checks nothing"
+    end
+  end
+end

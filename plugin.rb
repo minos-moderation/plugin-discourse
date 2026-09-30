@@ -15,4 +15,11 @@ end
 require_relative "lib/minos_moderation/engine"
 
 after_initialize do
+  NewPostManager.add_handler(MinosModeration::NewPostHandler::PRIORITY) do |manager|
+    MinosModeration::NewPostHandler.call(manager)
+  end
+
+  if respond_to?(:register_problem_check)
+    register_problem_check(MinosModeration::MinosGatewayProblem)
+  end
 end

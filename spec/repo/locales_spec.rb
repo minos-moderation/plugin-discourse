@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "yaml"
+require_relative "../../lib/minos_moderation/decision" unless defined?(MinosModeration::Decision)
 
 # The plugin speaks Polish only. Discourse falls back to `en`, so the `en` files carry the
 # same Polish text as `pl_PL`, key for key (docs/development.md, "Locales"). Plain Ruby: it
@@ -35,6 +36,39 @@ RSpec.describe "The plugin's locale files" do
     descriptions = tree("server", "pl_PL").fetch("site_settings")
     settings.each_key do |name|
       expect(descriptions[name].to_s).not_to be_empty, "#{name} has no description"
+    end
+  end
+
+  it "has a text for every translation key the code names literally" do
+    polish = tree("server", "pl_PL")
+    sources = Dir.glob(File.join(root, "{lib,app}/**/*.rb"))
+    keys =
+      sources.flat_map do |file|
+        File.read(file, encoding: "UTF-8").scan(/"(minos_moderation\.[a-z_.]+)"/).flatten
+      end
+    expect(keys).not_to be_empty, "no literal key found: the scan is broken"
+    keys.uniq.each do |key|
+      expect(polish.dig(*key.split("."))).to be_a(String), "#{key} has no text"
+    end
+  end
+
+  it "has a text for every reason and action a decision may give" do
+    texts = tree("server", "pl_PL").fetch("minos_moderation")
+    (MinosModeration::Decision::REASONS - [:verdict]).each do |reason|
+      expect(texts.dig("reasons", reason.to_s)).to be_a(String), "reason #{reason}"
+    end
+    actions =
+      MinosModeration::Decision::ACTIONS.map(&:to_s) +
+        %w[approve_unassessed approve_masked_unassessed]
+    actions.each do |action|
+      expect(texts.dig("actions", action)).to be_a(String), "action #{action}"
+    end
+  end
+
+  it "has a text for every configuration problem the dashboard may show" do
+    problems = tree("server", "pl_PL").dig("minos_moderation", "problems")
+    %w[invalid_url missing_key missing_secret refused unexpected disallowed_address].each do |key|
+      expect(problems[key]).to be_a(String), key
     end
   end
 
