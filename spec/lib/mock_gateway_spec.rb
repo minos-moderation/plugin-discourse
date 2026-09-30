@@ -18,11 +18,17 @@ end
 # mock's `[minos:…]` markers only.
 #
 # Needs a checkout of client-php in MINOS_CLIENT_PHP and `php` with ext-curl (CI provides
-# both). Without MINOS_CLIENT_PHP the whole group is skipped: the application is absent.
+# both). Without MINOS_CLIENT_PHP the whole group is skipped: the application is absent,
+# unless MINOS_REQUIRE_MOCK_GATEWAY=1 (CI's standalone job) turns the skip into a failure.
 RSpec.describe "The plugin against the mock gateway" do
   before(:all) do
     @dir = ENV.fetch("MINOS_CLIENT_PHP", "")
-    skip "MINOS_CLIENT_PHP is not set: no mock gateway to run" if @dir.empty?
+    if @dir.empty?
+      # CI's standalone job sets this, so the group can never pass there by skipping.
+      raise "MINOS_CLIENT_PHP is required here" if ENV["MINOS_REQUIRE_MOCK_GATEWAY"] == "1"
+
+      skip "MINOS_CLIENT_PHP is not set: no mock gateway to run"
+    end
 
     @secret = "atrapa-minos-sekret-webhooka-tylko-lokalnie"
     @key = "wgb2b_atrapa_minos_0000000000000000"

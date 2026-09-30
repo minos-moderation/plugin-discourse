@@ -1,0 +1,49 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # The specs that need no Discourse: the signature on the gateway's vector, the payload
+  # reader, the request and its answers, the text and its masks, every publish/hold
+  # decision, the Claude Code rules, the locales, and the wire code against the mock
+  # gateway of client-php over real HTTP. A skip here is a failure: the mock spec is
+  # required (MINOS_REQUIRE_MOCK_GATEWAY).
+  standalone:
+    name: standalone (rspec, no Discourse)
+    runs-on: ubuntu-latest
+    env:
+      MINOS_CLIENT_PHP: ${{ github.workspace }}/tmp/client-php
+      MINOS_REQUIRE_MOCK_GATEWAY: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out client-php (the mock gateway), pinned
+        uses: actions/checkout@v4
+        with:
+          repository: minos-moderation/client-php
+          ref: fc4beb7625c9119315a560fd04c4c2e49e49f6ae
+          path: tmp/client-php
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+      - name: PHP with ext-curl for the mock gateway
+        run: |
+          php --version
+          php -m | grep -qix curl
+      - name: Specs
+        run: bundle exec rspec spec/lib spec/repo
+
+  # The specs that need Discourse (spec/requests, spec/jobs, spec/integration), run by
+  # Discourse's own plugin workflow against core's `latest`. Its linting job is skipped:
+  # the plugin's Gemfile carries rspec alone, without rubocop-discourse.
+  discourse:
+    uses: discourse/.github/.github/workflows/discourse-plugin.yml@v1
+    with:
+      name: minos-moderation
+      skip_linting: true
