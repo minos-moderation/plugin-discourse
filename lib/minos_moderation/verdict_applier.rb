@@ -256,9 +256,22 @@ module MinosModeration
     def acted_on?(post, reviewable)
       return true if post.deleted_at || post.hidden? || post.version.to_i > 1
       return true if reviewable.nil?
-      return true if Text.plain(post.raw) != Text.plain(reviewable.payload["raw"])
+
+      published = Text.plain(published_form(post.raw))
+      return true if published != Text.plain(published_form(reviewable.payload["raw"]))
 
       ::ReviewableFlaggedPost.where(target: post).where.not(status: :pending).exists?
+    end
+
+    # A queued text as Discourse publishes it: `PostCreator#setup_post` replaces the
+    # Unicode spaces of `TextCleaner.normalize_whitespaces` (no-break, en/em, ideographic
+    # and the like) with plain spaces and strips the end. Comparing the published post with
+    # its queued text without this would read every such post as edited by a person.
+    #
+    # @param raw [String, nil] a post's raw Markdown.
+    # @return [String] the same text after Discourse's normalisation.
+    def published_form(raw)
+      ::TextCleaner.normalize_whitespaces(raw.to_s).rstrip
     end
 
     # Takes a published post out of view; a moderator can show it again.
@@ -282,7 +295,10 @@ module MinosModeration
       masked = reviewable && masks_for(raw, title, verdict)
       return [hide(post, instead(decision, :mask_unmappable, action: :hide)), {}] unless masked
 
-      fields = { raw: masked[:raw], edit_reason: translate("minos_moderation.edit_reason") }
+      fields = {
+        raw: published_form(masked[:raw]),
+        edit_reason: translate("minos_moderation.edit_reason"),
+      }
       fields[:title] = masked[:title] if title && post.is_first_post?
       revised =
         begin

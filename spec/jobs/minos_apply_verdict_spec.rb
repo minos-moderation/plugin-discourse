@@ -227,6 +227,37 @@ RSpec.describe Jobs::MinosApplyVerdict do
       expect(entry["outcome"]).to eq("keep")
     end
 
+    it "still hides a post Discourse normalised on publication (a no-break space)" do
+      queued = Fabricate(:reviewable_queued_post)
+      queued.payload["raw"] = "Tekst posta\u00A0z jedną twardą spacją, zupełnie zwyczajny."
+      queued.save!
+      queued.perform(Discourse.system_user, :approve_post)
+      published = Post.find(queued.reload.target_id)
+      # Discourse's own normalisation happened: the stored text is not the queued one.
+      expect(published.raw).not_to eq(queued.payload["raw"])
+      expect(published.version).to eq(1)
+
+      queued_sent = MinosModeration::Text.for_submission(queued.payload["raw"])
+      MinosModeration::Store.set(
+        queued.id,
+        {
+          "status" => "received",
+          "received_at" => Time.now.to_i,
+          "text_digest" => queued_sent[:digest],
+          "truncated" => false,
+          "core_hold" => nil,
+          "auto_published" => true,
+          "post_id" => published.id,
+          "attempt" => 1,
+          "verdict" => assessed("zablokowane", "id" => "discourse:#{queued.id}.1"),
+        },
+      )
+      described_class.new.execute(reviewable_id: queued.id)
+
+      expect(published.reload).to be_hidden
+      expect(MinosModeration::Store.get(queued.id)).to include("outcome" => "hide")
+    end
+
     it "keeps a moderator's edit: nothing is hidden or overwritten" do
       edited = "#{raw} Poprawione przez moderatora."
       PostRevisor.new(post).revise!(Fabricate(:moderator), { raw: edited }, force_new_version: true)
