@@ -7,10 +7,10 @@ module MinosModeration
   # The client side of the gateway's `POST /api/v1/b2b/oceny` ("scores"): the request the
   # plugin sends for one held post and the reading of the gateway's answer.
   #
-  # The body carries the item id (the reviewable's id, never content), the text and two
-  # spam signals, `links` and `author_first_post`. It never carries an e-mail, an IP
-  # address or a user id: {request_body} takes no author at all and refuses any other
-  # signal.
+  # The body carries the item id (the reviewable's id and the attempt, never content), the
+  # text and the spam signals `links`, `author_first_post` and `link_domains`. It never
+  # carries an e-mail, an IP address or a user id: {request_body} takes no author at all
+  # and refuses any other signal.
   #
   # Plain Ruby: no Rails, so the standalone tier runs it without Discourse.
   module Scores
@@ -20,11 +20,20 @@ module MinosModeration
     # An item id as the contract allows it.
     ITEM_ID = /\A[A-Za-z0-9._:-]{1,64}\z/
 
-    # The plugin's item ids: the prefix and the reviewable's id.
-    OWN_ID = /\Adiscourse:([1-9][0-9]{0,17})\z/
+    # The plugin's item ids: the prefix, the reviewable's id and the attempt. Each attempt
+    # has its own id, so a verdict for an earlier attempt is recognised and ignored.
+    OWN_ID = /\Adiscourse:([1-9][0-9]{0,17})\.([1-9][0-9]{0,5})\z/
 
     # The spam signals the plugin sends, and nothing else.
-    META_KEYS = %w[links author_first_post].freeze
+    META_KEYS = %w[links author_first_post link_domains].freeze
+
+    # The contract's limit for `link_domains`.
+    MAX_LINK_DOMAINS = 10
+
+    # A registrable domain as the plugin sends it: lowercase ASCII labels, at least two,
+    # the last one starting with a letter (so never an IP address).
+    LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    DOMAIN = /\A(?=.{1,253}\z)(?:#{LABEL}\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]\z/o
 
     # The contract's limit for `tekst`, in characters.
     MAX_CHARS = 3000
@@ -47,20 +56,24 @@ module MinosModeration
     Outcome = Struct.new(:kind, :http, :code, :retry_in, keyword_init: true)
 
     # @param reviewable_id [Integer, String] the reviewable's id.
-    # @return [String] the item id sent for it, `discourse:<id>`.
-    # @raise [ArgumentError] when the id is not a positive integer.
-    def self.item_id(reviewable_id)
-      id = reviewable_id.is_a?(Integer) ? reviewable_id : Integer(reviewable_id.to_s, 10)
-      raise ArgumentError, "a reviewable id is a positive integer" unless id.positive?
+    # @param attempt [Integer, String] the attempt's number, from 1.
+    # @return [String] the item id sent for that attempt, `discourse:<id>.<attempt>`.
+    # @raise [ArgumentError] when either is not a positive integer (or the attempt is over
+    #   999999).
+    def self.item_id(reviewable_id, attempt)
+      id = positive(reviewable_id)
+      number = positive(attempt)
+      raise ArgumentError, "an attempt is at most 999999" if number > 999_999
 
-      "discourse:#{id}"
+      "discourse:#{id}.#{number}"
     end
 
     # @param item_id [String] an item id from a webhook payload.
-    # @return [Integer, nil] the reviewable's id, or nil when the item is not this plugin's.
-    def self.reviewable_id(item_id)
+    # @return [Array(Integer, Integer), nil] the reviewable's id and the attempt, or nil when
+    #   the item is not this plugin's.
+    def self.parse_item_id(item_id)
       match = OWN_ID.match(item_id.to_s)
-      match && Integer(match[1], 10)
+      match && [Integer(match[1], 10), Integer(match[2], 10)]
     end
 
     # The JSON body for one held post.
@@ -69,7 +82,8 @@ module MinosModeration
     # @param text [String] the text to assess, at most {MAX_CHARS} characters.
     # @param profile [String] the profile to assess it with.
     # @param meta [Hash{String => Object}] `links` (Integer) and `author_first_post`
-    #   (Boolean); no other key.
+    #   (Boolean); optionally `link_domains` (up to {MAX_LINK_DOMAINS} distinct {DOMAIN}s);
+    #   no other key.
     # @return [String] the request body.
     # @raise [ArgumentError] on a malformed id, an empty or too long text, or any signal
     #   other than {META_KEYS}.
@@ -83,6 +97,9 @@ module MinosModeration
       raise ArgumentError, "signals not in the contract: #{unknown.join(", ")}" if unknown.any?
       unless signals["links"].is_a?(Integer) && [true, false].include?(signals["author_first_post"])
         raise ArgumentError, "links is an Integer and author_first_post a Boolean"
+      end
+      if signals.key?("link_domains") && !domains?(signals["link_domains"])
+        raise ArgumentError, "link_domains is a list of at most #{MAX_LINK_DOMAINS} domains"
       end
 
       item = { "id" => item_id, "tekst" => text, "profil" => profile.to_s, "meta" => signals }
@@ -168,6 +185,23 @@ module MinosModeration
       value.is_a?(Integer) && value.positive? ? value : nil
     end
 
-    private_class_method :error_of, :retry_in
+    # @param value [Object] a `link_domains` signal.
+    # @return [Boolean] whether it is distinct domains, at most {MAX_LINK_DOMAINS} of them.
+    def self.domains?(value)
+      value.is_a?(Array) && value.size <= MAX_LINK_DOMAINS && value.uniq.size == value.size &&
+        value.all? { |domain| domain.is_a?(String) && DOMAIN.match?(domain) }
+    end
+
+    # @param value [Integer, String] a positive integer, or its decimal digits.
+    # @return [Integer] the integer.
+    # @raise [ArgumentError] when it is not a positive integer.
+    def self.positive(value)
+      number = value.is_a?(Integer) ? value : Integer(value.to_s, 10)
+      raise ArgumentError, "not a positive integer" unless number.positive?
+
+      number
+    end
+
+    private_class_method :error_of, :retry_in, :domains?, :positive
   end
 end

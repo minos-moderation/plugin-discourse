@@ -25,6 +25,10 @@ RSpec.describe "Minos moderation, end to end", type: :request do
     result.reviewable
   end
 
+  def item_id(reviewable)
+    "discourse:#{reviewable.id}.#{MinosModeration::Store.get(reviewable.id)["attempt"]}"
+  end
+
   def deliver(payload)
     body = JSON.generate(payload)
     post "/minos/webhook",
@@ -39,7 +43,7 @@ RSpec.describe "Minos moderation, end to end", type: :request do
   it "publishes a post the gateway finds safe" do
     reviewable = hold("Dziękuję za pomocną odpowiedź w tym wątku.")
     deliver(
-      "id" => "discourse:#{reviewable.id}",
+      "id" => item_id(reviewable),
       "status" => "ocenione",
       "kwalifikacja" => "bezpieczne",
       "kategorie" => [],
@@ -54,7 +58,7 @@ RSpec.describe "Minos moderation, end to end", type: :request do
     reviewable = hold("To jest **głupi** pomysł, naprawdę.")
     sent = MinosModeration::Text.for_submission(reviewable.payload["raw"])[:text]
     deliver(
-      "id" => "discourse:#{reviewable.id}",
+      "id" => item_id(reviewable),
       "status" => "ocenione",
       "kwalifikacja" => "ocenzurowane",
       "kategorie" => ["wulgaryzmy"],

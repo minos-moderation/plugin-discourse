@@ -37,15 +37,24 @@ module MinosModeration
 
     # The reduction from Markdown to plain text, step by step. Each step replaces a match
     # with its parts: an Integer is a capture group (kept, with its origin), a String is
-    # made-up text (with no origin, so a mask on it cannot be carried back).
+    # made-up text (with no origin, so a mask on it cannot be carried back), and a Hash
+    # `{group:, before:, after:}` is a group kept with made-up text around it, only when
+    # the group matched something.
     MARKUP = [
       [/\r(?=\n)/, []], # CRLF → LF
       [/\r/, ["\n"]], # a lone CR → LF
       [/^[ \t]*(?:```|~~~)[^\n]*/, []], # code fence lines (the code inside stays)
-      [/!\[([^\]\n|]*)(?:\|[^\]\n]*)?\]\([^)\n]*\)/, [1]], # image → its alt text
+      [
+        /!\[([^\]\n|]*)(?:\|[^\]\n]*)?\]\(\s*<?[^)\s>]*>?(?:\s+"([^"\n]*)")?\s*\)/,
+        [1, { group: 2, before: " " }],
+      ], # image → its alt text and its title (the URL goes; `link_hosts` reads it)
       [/\[([^\]\n]+)\]\(([^)\s]+)\)/, [1, " ", 2]], # link → its text and its URL
       [/\[details=(?:"([^"\]\n]*)"|([^\]\n]*))\]/i, [1, 2]], # details → its summary
-      [%r{\[/?(?:#{BBCODE})(?:=[^\]\n]*)?\]}io, []], # BBCode tags (a quote's author goes)
+      [
+        /\[quote=(?:"([^",\]\n]*)[^"\]\n]*"|([^,\]\n]*)[^\]\n]*)\]/i,
+        [{ group: 1, after: "\n" }, { group: 2, after: "\n" }],
+      ], # quote → the name shown as its title (not `post:`, `topic:` or `username:`)
+      [%r{\[/?(?:#{BBCODE})(?:=[^\]\n]*)?\]}io, []], # other BBCode tags
       [/<!--|-->/, []], # comment markers (the commented text stays)
       [/^[ \t]{0,3}\#{1,6}[ \t]+/, []], # ATX heading markers
       [/^(?:[ \t]{0,3}>[ \t]?)+/, []], # blockquote markers
@@ -80,6 +89,23 @@ module MinosModeration
     # @return [Integer] how many links it carries, capped at the contract's ceiling.
     def self.link_count(raw)
       [clean(raw).scan(LINK).size, MAX_SIGNAL].min
+    end
+
+    # The host names the post links to, images included, for the `link_domains` signal.
+    #
+    # Only plain ASCII names: an IP address is not a domain, and a name in Unicode is left
+    # out rather than guessed into its ASCII form. Reducing a host to its registrable
+    # domain needs the public suffix list, which is the caller's (`Submission`).
+    #
+    # @param raw [String, nil] the post's raw Markdown.
+    # @return [Array<String>] distinct lowercase host names, in order of appearance.
+    def self.link_hosts(raw)
+      hosts =
+        clean(raw).scan(LINK).filter_map do |url|
+          host = url[%r{\Ahttps?://(?:[^@/\s]*@)?([^/:?#\s]+)}i, 1].to_s.downcase.chomp(".")
+          host if host.ascii_only? && host.include?(".") && !host.match?(/\A[0-9.]+\z/)
+        end
+      hosts.uniq
     end
 
     # Carries the gateway's masks from the sent text back onto the title and the Markdown.
@@ -173,6 +199,19 @@ module MinosModeration
 
             out_chars.concat(chars[match.begin(part)...match.end(part)])
             out_origins.concat(origins[match.begin(part)...match.end(part)])
+          elsif part.is_a?(Hash)
+            group = part[:group]
+            next if match[group].nil? || match[group].empty?
+
+            made_up = ->(text) { [text.to_s.chars, [nil] * text.to_s.length] }
+            before, before_origins = made_up.call(part[:before])
+            after, after_origins = made_up.call(part[:after])
+            out_chars.concat(before, chars[match.begin(group)...match.end(group)], after)
+            out_origins.concat(
+              before_origins,
+              origins[match.begin(group)...match.end(group)],
+              after_origins,
+            )
           else
             out_chars.concat(part.chars)
             out_origins.concat([nil] * part.length)

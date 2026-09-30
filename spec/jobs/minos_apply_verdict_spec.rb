@@ -60,7 +60,10 @@ RSpec.describe Jobs::MinosApplyVerdict do
       apply_verdict(verdict)
       expect(reviewable).to be_approved
       expect(Post.find(reviewable.target_id).raw).to eq(raw.sub("world", mask * 5))
-      expect(entry["original"]).to eq(raw)
+      # The unmasked text stays in the reviewable's history, never in the plugin's store.
+      expect(entry).not_to have_key("original")
+      expect(entry["original_digest"]).to eq(Digest::SHA256.hexdigest(raw))
+      expect(MinosModeration::Store.get(reviewable.id).to_json).not_to include("world")
       expect(entry["verdict"]).not_to have_key("ocenzurowany")
       expect(notes.join).to include("wulgaryzmy")
     end
@@ -93,7 +96,9 @@ RSpec.describe Jobs::MinosApplyVerdict do
       # Discourse may prettify a title (capitals), so the check is on the words.
       expect(published.topic.title).to include(mask * 5)
       expect(published.topic.title).not_to include("title")
-      expect(MinosModeration::Store.get(queued.id)["original_title"]).to eq(title)
+      stored = MinosModeration::Store.get(queued.id)
+      expect(stored).not_to have_key("original_title")
+      expect(stored["original_title_digest"]).to eq(Digest::SHA256.hexdigest(title))
     end
 
     it "leaves the post when the administrator chose so" do
@@ -101,6 +106,15 @@ RSpec.describe Jobs::MinosApplyVerdict do
       apply_verdict(assessed("ocenzurowane", "ocenzurowany" => masked))
       expect(reviewable).to be_pending
       expect(entry).to include("outcome" => "leave", "reason" => "censored_setting")
+    end
+
+    it "leaves the post when the queued text cannot be edited" do
+      allow_any_instance_of(ReviewableQueuedPost).to receive(:update_fields).and_raise(
+        Reviewable::UpdateConflict,
+      )
+      apply_verdict(assessed("ocenzurowane", "ocenzurowany" => masked))
+      expect(reviewable).to be_pending
+      expect(entry).to include("outcome" => "leave", "reason" => "action_failed")
     end
 
     it "leaves the post when the masks cannot be carried onto it" do
@@ -169,6 +183,74 @@ RSpec.describe Jobs::MinosApplyVerdict do
     apply_verdict(assessed("bezpieczne"))
     expect(reviewable).to be_rejected
     expect(entry["outcome"]).to eq("resolved_elsewhere")
+  end
+
+  describe "a late verdict for a post the failure mode published" do
+    let(:post) { Post.find(reviewable.target_id) }
+
+    before do
+      reviewable.perform(Discourse.system_user, :approve_post)
+      reviewable.reload
+    end
+
+    def late(verdict)
+      apply_verdict(
+        verdict,
+        { "auto_published" => true, "post_id" => reviewable.target_id, "attempt" => 1 },
+      )
+      post.reload
+    end
+
+    it "hides the post on zablokowane" do
+      late(assessed("zablokowane", "kategorie" => ["nekanie"]))
+      expect(post).to be_hidden
+      expect(entry).to include("status" => "done", "outcome" => "hide")
+    end
+
+    it "masks the post on ocenzurowane" do
+      late(assessed("ocenzurowane", "ocenzurowany" => sent[:text].sub("world", mask * 5)))
+      expect(post.raw).to eq(raw.sub("world", mask * 5))
+      expect(post).not_to be_hidden
+      expect(entry).to include("outcome" => "mask")
+      expect(entry).not_to have_key("original")
+    end
+
+    it "hides the post when the censored setting leaves such posts to moderators" do
+      SiteSetting.minos_censored_action = "zostaw_moderatorom"
+      late(assessed("ocenzurowane", "ocenzurowany" => sent[:text].sub("world", mask * 5)))
+      expect(post).to be_hidden
+    end
+
+    it "keeps a safe post as it is" do
+      late(assessed("bezpieczne"))
+      expect(post).not_to be_hidden
+      expect(entry["outcome"]).to eq("keep")
+    end
+
+    it "keeps a moderator's edit: nothing is hidden or overwritten" do
+      edited = "#{raw} Poprawione przez moderatora."
+      PostRevisor.new(post).revise!(Fabricate(:moderator), { raw: edited }, force_new_version: true)
+      late(assessed("zablokowane"))
+      expect(post).not_to be_hidden
+      expect(post.raw).to eq(edited)
+      expect(entry).to include("outcome" => "keep", "reason" => "person_acted")
+    end
+
+    it "keeps the author's edit within the grace period, which makes no new version" do
+      edited = "#{raw} Poprawione przez autora."
+      PostRevisor.new(post).revise!(post.user, { raw: edited })
+      late(assessed("ocenzurowane", "ocenzurowany" => sent[:text].sub("world", mask * 5)))
+      expect(post.raw).to eq(edited)
+      expect(entry["reason"]).to eq("person_acted")
+    end
+
+    it "keeps a post whose flag a moderator already reviewed" do
+      flagged = Fabricate(:reviewable_flagged_post, target: post, topic: post.topic)
+      flagged.update!(status: :ignored)
+      late(assessed("zablokowane"))
+      expect(post).not_to be_hidden
+      expect(entry["reason"]).to eq("person_acted")
+    end
   end
 
   it "applies a verdict once" do

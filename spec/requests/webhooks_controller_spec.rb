@@ -7,7 +7,7 @@ RSpec.describe MinosModeration::WebhooksController do
   fab!(:reviewable) { Fabricate(:reviewable_queued_post) }
 
   let(:secret) { "sekret-testowy-webhooka" }
-  let(:item_id) { "discourse:#{reviewable.id}" }
+  let(:item_id) { "discourse:#{reviewable.id}.2" }
   let(:verdict) do
     {
       "id" => item_id,
@@ -26,6 +26,8 @@ RSpec.describe MinosModeration::WebhooksController do
       reviewable.id,
       {
         "status" => "submitted",
+        "attempts" => 2,
+        "attempt" => 2,
         "queued_at" => Time.now.to_i,
         "submitted_at" => Time.now.to_i,
         "text_digest" => MinosModeration::Text.for_submission(reviewable.payload["raw"])[:digest],
@@ -109,8 +111,27 @@ RSpec.describe MinosModeration::WebhooksController do
     expect(response.status).to eq(200)
   end
 
+  it "drops a verdict for an earlier attempt, with 200" do
+    ["discourse:#{reviewable.id}.1", "discourse:#{reviewable.id}"].each do |id|
+      expect_not_enqueued_with(job: :minos_apply_verdict) do
+        deliver(JSON.generate(verdict.merge("id" => id)))
+      end
+      expect(response.status).to eq(200), id
+    end
+    expect(status).to eq("submitted")
+  end
+
+  it "takes a late verdict for a post the failure mode published" do
+    entry = MinosModeration::Store.get(reviewable.id)
+    MinosModeration::Store.set(reviewable.id, entry.merge("status" => "auto_published"))
+    expect_enqueued_with(job: :minos_apply_verdict, args: { reviewable_id: reviewable.id }) do
+      deliver(JSON.generate(verdict))
+    end
+    expect(status).to eq("received")
+  end
+
   it "drops an id that is not a pending post of this forum, with 200" do
-    ["k-1", "discourse:999999999", "discourse:0"].each do |id|
+    ["k-1", "discourse:999999999.1", "discourse:0.1"].each do |id|
       expect_not_enqueued_with(job: :minos_apply_verdict) do
         deliver(JSON.generate(verdict.merge("id" => id)))
       end

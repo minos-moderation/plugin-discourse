@@ -20,6 +20,7 @@ en:
     problem:
       minos_gateway_problem: "Minos — moderacja postów: %{szczegoly}. Do czasu naprawy posty są traktowane zgodnie z ustawieniem minos_failure_mode. <a href='%{base_path}/admin/site_settings/category/plugins?filter=minos'>Ustawienia wtyczki</a>"
   minos_moderation:
+    edit_reason: "Minos: zamaskowano fragmenty"
     notes:
       verdict: "Minos: werdykt „%{werdykt}”, kategorie: %{kategorie}."
       no_categories: "brak"
@@ -33,6 +34,9 @@ en:
       approve_masked_unassessed: "Post opublikowano z zamaskowanymi fragmentami, bez pełnej oceny, zgodnie z ustawieniem fail-open; oryginalna treść jest w historii tego zgłoszenia."
       reject: "Post odrzucono."
       leave: "Post czeka na decyzję moderatora."
+      keep: "Opublikowany wcześniej post zostaje bez zmian."
+      mask: "W opublikowanym wcześniej poście zamaskowano fragmenty; oryginalna treść jest w historii edycji posta."
+      hide: "Opublikowany wcześniej post ukryto; moderator może go przywrócić."
     reasons:
       core_hold: "forum samo wymaga zatwierdzenia tego posta, więc werdykt jest tylko podpowiedzią"
       edited: "post zmieniono w kolejce po wysłaniu go do oceny"
@@ -48,6 +52,8 @@ en:
       support: "treść może świadczyć o kryzysie autora, więc o odrzuceniu decyduje człowiek"
       topic_closed: "temat zamknięto, zanim przyszedł werdykt"
       action_failed: "nie udało się wykonać tej akcji automatycznie"
+      apply_stuck: "werdyktu nie udało się zastosować przez dobę"
+      person_acted: "ktoś zajął się już tym postem, więc jego decyzja zostaje"
     problems:
       invalid_url: "adres bramy (minos_gateway_url) jest nieprawidłowy albo nie używa https"
       missing_key: "brak klucza API (minos_api_key)"

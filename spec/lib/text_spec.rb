@@ -30,10 +30,10 @@ RSpec.describe "MinosModeration::Text" do
       MD
       sent = text.for_submission(raw)[:text]
       %w[
-        Nagłówek pogrubiony skreślony kodem cytowana cytowane Podsumowanie ukryta tajemnica
+        Nagłówek pogrubiony skreślony kodem cytowana ktos cytowane Podsumowanie ukryta tajemnica
         komentarz opis https://example.test/a obrazka puts
       ].each { |word| expect(sent).to include(word) }
-      markup = ["**", "~~", "`", "[quote", "[/details]", "![", "<!--", "ktos", "upload://", "```"]
+      markup = ["**", "~~", "`", "[quote", "[/details]", "![", "<!--", "post:1", "upload://", "```"]
       markup.each { |token| expect(sent).not_to include(token) }
     end
 
@@ -82,11 +82,48 @@ RSpec.describe "MinosModeration::Text" do
     end
   end
 
-  describe "the links signal" do
+  describe "the links signals" do
     it "counts the links in the raw text" do
       raw = "a https://a.test/x [b](http://b.test) ![c](upload://c.png) www.d.test"
       expect(text.link_count(raw)).to eq(2)
       expect(text.link_count(nil)).to eq(0)
+    end
+
+    it "lists the hosts of links and images, once each, and no address or local file" do
+      raw =
+        "[a](https://WWW.Example.test/x) ![b](https://cdn.example.test/i.png) " \
+          "https://www.example.test/y http://1.2.3.4/z https://user:pw@shop.example.test:8443/ " \
+          "![c](upload://c.png) https://zażółć.example/ https://localhost/"
+      expect(text.link_hosts(raw)).to eq(%w[www.example.test cdn.example.test shop.example.test])
+    end
+  end
+
+  describe "quotes and images" do
+    it "keeps the name a quote shows as its title, and nothing else of its attribute" do
+      raw = "[quote=\"Jan Kowalski, post:3, topic:7, username:jkowal\"]\ncytat\n[/quote]\nok"
+      sent = text.for_submission(raw)[:text]
+      expect(sent).to eq("Jan Kowalski\n\ncytat\n\nok")
+      %w[post:3 topic:7 username jkowal].each { |part| expect(sent).not_to include(part) }
+    end
+
+    it "keeps the name of a quote without quotation marks, apart from the quoted text" do
+      expect(text.for_submission("[quote=ala, post:1]tekst[/quote]")[:text]).to eq("ala\ntekst")
+    end
+
+    it "keeps an image's title with its alt text, and not its address" do
+      raw = %(Zobacz ![alt obrazka|690x388](https://cdn.example.test/a.png "tytuł obrazka") tu)
+      sent = text.for_submission(raw)[:text]
+      expect(sent).to eq("Zobacz alt obrazka tytuł obrazka tu")
+    end
+
+    it "carries a mask on a quote's name or an image's title back into the Markdown" do
+      quote = %([quote="Zły Człowiek, post:1"]\ncytat\n[/quote]\n)
+      raw = quote + %(![a](https://e.test/i "zły tytuł"))
+      sent = text.for_submission(raw)[:text]
+      masked = sent.gsub("Zły", mask * 3).gsub("zły", mask * 3)
+      result = text.apply_masks(raw, sent, masked)[:raw]
+      expect(result).to include(%([quote="#{mask * 3} Człowiek, post:1"]))
+      expect(result).to include(%("#{mask * 3} tytuł"))
     end
   end
 

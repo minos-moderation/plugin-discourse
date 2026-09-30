@@ -41,6 +41,15 @@ RSpec.describe Jobs::MinosSweeper do
       SiteSetting.minos_failure_mode = "fail-open"
       sweep
       expect(reviewable.reload).to be_approved
+      expect(entry["status"]).to eq("auto_published")
+    end
+
+    it "stays with the moderators under fail-open when Discourse held it itself" do
+      SiteSetting.minos_failure_mode = "fail-open"
+      store(entry.merge("core_hold" => "watched_word"))
+      sweep
+      expect(reviewable.reload).to be_pending
+      expect(entry).to include("status" => "done", "reason" => "core_hold")
     end
   end
 
@@ -66,6 +75,14 @@ RSpec.describe Jobs::MinosSweeper do
     expect_enqueued_with(job: :minos_apply_verdict, args: { reviewable_id: reviewable.id }) do
       sweep
     end
+  end
+
+  it "gives up on a verdict it could not apply for a day, and leaves the post" do
+    verdict = { "status" => "ocenione", "kwalifikacja" => "bezpieczne" }
+    store("status" => "received", "received_at" => now - (24 * 3600) - 1, "verdict" => verdict)
+    expect_not_enqueued_with(job: :minos_apply_verdict) { sweep }
+    expect(reviewable.reload).to be_pending
+    expect(entry).to include("status" => "done", "reason" => "apply_stuck")
   end
 
   it "forgets a finished entry after thirty days, and keeps a recent one" do

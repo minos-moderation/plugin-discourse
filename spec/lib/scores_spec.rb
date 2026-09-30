@@ -12,32 +12,49 @@ RSpec.describe "MinosModeration::Scores" do
 
   def body_for(text: "tekst posta", meta: { "links" => 1, "author_first_post" => true })
     JSON.parse(
-      scores.request_body(item_id: "discourse:7", text: text, profile: "forum_teen", meta: meta),
+      scores.request_body(item_id: "discourse:7.1", text: text, profile: "forum_teen", meta: meta),
     )
   end
 
   describe "the item id" do
-    it "is the reviewable's id behind a prefix, within the contract's id rule" do
-      [1, 42, "42", 999_999_999_999].each do |id|
-        item = scores.item_id(id)
+    it "is the reviewable's id and the attempt behind a prefix, within the contract's rule" do
+      [[1, 1], [42, 3], ["42", "7"], [999_999_999_999_999_999, 999_999]].each do |id, attempt|
+        item = scores.item_id(id, attempt)
         expect(item).to match(contract_id)
-        expect(scores.reviewable_id(item)).to eq(Integer(id))
+        expect(scores.parse_item_id(item)).to eq([Integer(id), Integer(attempt)])
       end
     end
 
     it "carries no content, only digits after the prefix" do
-      expect(scores.item_id(123)).to eq("discourse:123")
+      expect(scores.item_id(123, 2)).to eq("discourse:123.2")
+    end
+
+    it "gives every attempt of a post its own id" do
+      ids = (1..5).map { |attempt| scores.item_id(9, attempt) }
+      expect(ids.uniq.size).to eq(5)
     end
 
     it "refuses what is not a positive integer" do
-      [0, -1, "1a", "", nil, 1.5, "0x10"].each do |id|
-        expect { scores.item_id(id) }.to raise_error(ArgumentError), id.inspect
+      [0, -1, "1a", "", nil, 1.5, "0x10"].each do |value|
+        expect { scores.item_id(value, 1) }.to raise_error(ArgumentError), value.inspect
+        expect { scores.item_id(1, value) }.to raise_error(ArgumentError), value.inspect
       end
+      expect { scores.item_id(1, 1_000_000) }.to raise_error(ArgumentError)
     end
 
-    it "reads back only the plugin's own ids" do
-      ["k-1", "discourse:", "discourse:0", "discourse:01", "discourse:1x", "xdiscourse:1", nil]
-        .each { |id| expect(scores.reviewable_id(id)).to be_nil, id.inspect }
+    it "reads back only the plugin's own ids with an attempt" do
+      [
+        "k-1",
+        "discourse:1",
+        "discourse:",
+        "discourse:0.1",
+        "discourse:1.0",
+        "discourse:01.1",
+        "discourse:1.01",
+        "discourse:1.x",
+        "xdiscourse:1.1",
+        nil,
+      ].each { |id| expect(scores.parse_item_id(id)).to be_nil, id.inspect }
     end
   end
 
@@ -79,6 +96,26 @@ RSpec.describe "MinosModeration::Scores" do
         "links" => 3,
         "author_first_post" => false,
       )
+    end
+
+    it "sends link_domains when given, as up to ten distinct registrable domains" do
+      domains = %w[example.pl a.co.uk]
+      meta = { "links" => 2, "author_first_post" => false, "link_domains" => domains }
+      expect(body_for(meta: meta)["elementy"][0]["meta"]["link_domains"]).to eq(
+        %w[example.pl a.co.uk],
+      )
+      [
+        (1..11).map { |i| "d#{i}.pl" },
+        %w[example.pl example.pl],
+        ["1.2.3.4"],
+        ["Example.pl"],
+        ["localhost"],
+        "example.pl",
+        [7],
+      ].each do |domains|
+        bad = { "links" => 0, "author_first_post" => false, "link_domains" => domains }
+        expect { body_for(meta: bad) }.to raise_error(ArgumentError), domains.inspect
+      end
     end
 
     it "takes 3000 characters, counted as characters, and refuses one more" do

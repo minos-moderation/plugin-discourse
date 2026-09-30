@@ -80,10 +80,14 @@ RSpec.describe "The plugin against the mock gateway" do
     text = MinosModeration::Text.for_submission(raw)[:text]
     body =
       MinosModeration::Scores.request_body(
-        item_id: MinosModeration::Scores.item_id(id),
+        item_id: MinosModeration::Scores.item_id(id, 1),
         text: text,
         profile: "forum_adult",
-        meta: { "links" => MinosModeration::Text.link_count(raw), "author_first_post" => true },
+        meta: {
+          "links" => MinosModeration::Text.link_count(raw),
+          "author_first_post" => true,
+          "link_domains" => ["example.test"],
+        },
       )
     response = client.post(endpoint, @key, body)
     [MinosModeration::Scores.classify(response.status, response.body), text]
@@ -124,7 +128,7 @@ RSpec.describe "The plugin against the mock gateway" do
   end
 
   def by_id(received, id)
-    received.select { |delivery| delivery.dig(:payload, "id") == "discourse:#{id}" }
+    received.select { |delivery| delivery.dig(:payload, "id") == "discourse:#{id}.1" }
   end
 
   it "accepts the request body, and delivers verdicts that verify and parse" do
@@ -193,7 +197,7 @@ RSpec.describe "The plugin against the mock gateway" do
       request["Content-Type"] = "application/json"
       request["X-Gateway-Key"] = @key
       request["X-Minos-Mock-Error"] = code
-      request.body = JSON.generate("elementy" => [{ "id" => "discourse:30", "tekst" => "t" }])
+      request.body = JSON.generate("elementy" => [{ "id" => "discourse:30.1", "tekst" => "t" }])
       response = Net::HTTP.start(endpoint.host, endpoint.port) { |http| http.request(request) }
       outcome = MinosModeration::Scores.classify(response.code.to_i, response.body)
       expect([outcome.kind, outcome.code]).to eq([kind, code])
@@ -201,7 +205,7 @@ RSpec.describe "The plugin against the mock gateway" do
   end
 
   it "is refused without the key, as a configuration error" do
-    body = JSON.generate("elementy" => [{ "id" => "discourse:40", "tekst" => "t" }])
+    body = JSON.generate("elementy" => [{ "id" => "discourse:40.1", "tekst" => "t" }])
     response = client.post(endpoint, "wgb2b_zly_klucz", body)
     outcome = MinosModeration::Scores.classify(response.status, response.body)
     expect([outcome.kind, outcome.code]).to eq([:config_error, "brak_klucza"])

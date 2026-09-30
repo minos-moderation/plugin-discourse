@@ -93,6 +93,16 @@ RSpec.describe "MinosModeration::Decision" do
       end
     end
 
+    it "never publishes a post Discourse holds itself, or a moderator edited, even fail-open" do
+      open_mode = defaults.merge("failure_mode" => "fail-open")
+      %i[timeout config no_text unassessed].each do |reason|
+        held = decision.for_failure(open_mode, reason, core_hold: true)
+        expect([held.action, held.reason]).to eq(%i[leave core_hold]), reason.to_s
+        edited = decision.for_failure(open_mode, reason, edited: true)
+        expect([edited.action, edited.reason]).to eq(%i[leave edited]), reason.to_s
+      end
+    end
+
     it "reads a payload that is not one as nieocenione" do
       [nil, {}, "bezpieczne", { "status" => "ocenione", "kwalifikacja" => "inne" }].each do |value|
         expect(decide(value).action).to eq(:leave), value.inspect
@@ -113,6 +123,62 @@ RSpec.describe "MinosModeration::Decision" do
       rejecting = { "blocked_action" => "odrzuc" }
       result = decide(verdict("zablokowane"), with: rejecting, truncated: true)
       expect(result.action).to eq(:reject)
+    end
+
+    it "leaves a censored head to the moderators under both modes" do
+      censored = verdict("ocenzurowane", "ocenzurowany" => "█")
+      %w[fail-open fail-closed].each do |mode|
+        result = decide(censored, with: { "failure_mode" => mode }, truncated: true)
+        expect([result.action, result.reason]).to eq(%i[leave truncated]), mode
+      end
+    end
+  end
+
+  describe "a verdict for a post the failure mode already published" do
+    def late(value, with: {}, **flags)
+      decision.for_late_verdict(value, defaults.merge(with), **flags)
+    end
+
+    let(:censored) { verdict("ocenzurowane", "ocenzurowany" => "to jest █████") }
+
+    it "keeps a safe post, and one without a verdict" do
+      expect(late(verdict("bezpieczne")).action).to eq(:keep)
+      expect(late(unassessed).action).to eq(:keep)
+    end
+
+    it "hides a blocked post, whatever the blocked setting" do
+      %w[zostaw_moderatorom odrzuc].each do |blocked|
+        expect(late(verdict("zablokowane"), with: { "blocked_action" => blocked }).action)
+          .to eq(:hide), blocked
+      end
+    end
+
+    it "masks a censored post, or hides it when the setting, the text or the cut says so" do
+      expect(late(censored).action).to eq(:mask)
+      leaving = { "censored_action" => "zostaw_moderatorom" }
+      expect(late(censored, with: leaving).reason).to eq(:censored_setting)
+      expect(late(verdict("ocenzurowane")).reason).to eq(:no_masked_text)
+      expect(late(censored, truncated: true).reason).to eq(:truncated)
+      [late(censored, with: leaving), late(censored, truncated: true)].each do |result|
+        expect(result.action).to eq(:hide)
+      end
+    end
+
+    it "keeps whatever a person decided since" do
+      [verdict("zablokowane"), censored, verdict("bezpieczne")].each do |value|
+        result = late(value, acted: true)
+        expect([result.action, result.reason]).to eq(%i[keep person_acted])
+      end
+    end
+
+    it "never publishes, rejects or deletes anything" do
+      [nil, unassessed, verdict("bezpieczne"), censored, verdict("zablokowane")].each do |value|
+        [false, true].product([false, true]).each do |truncated, acted|
+          result = late(value, truncated: truncated, acted: acted)
+          expect(%i[keep mask hide]).to include(result.action)
+          expect(decision::REASONS).to include(result.reason)
+        end
+      end
     end
   end
 
@@ -187,6 +253,18 @@ RSpec.describe "MinosModeration::Decision" do
       end
     end
 
+    it "never publishes a post Discourse holds itself, with or without a verdict" do
+      each_result do |_value, chosen, flags, result|
+        next unless flags[:core_hold]
+
+        expect(result.action).to eq(:leave)
+        %i[timeout config no_text].each do |reason|
+          failure = decision.for_failure(chosen, reason, core_hold: true)
+          expect(failure.action).to eq(:leave)
+        end
+      end
+    end
+
     it "never publishes or rejects on an unknown setting value" do
       each_result do |value, chosen, flags, result|
         next unless value.is_a?(Hash) && value["status"] == "ocenione"
@@ -234,6 +312,17 @@ RSpec.describe "MinosModeration::Decision" do
     it "applies a received verdict again when its job was lost" do
       expect(needs("status" => "received", "received_at" => now - 121)).to eq(:reapply)
       expect(needs("status" => "received", "received_at" => now - 5)).to be_nil
+    end
+
+    it "gives up on a received verdict it could not apply for a day" do
+      expect(needs("status" => "received", "received_at" => now - (24 * 3600) - 1)).to eq(:abandon)
+      expect(needs("status" => "received", "received_at" => now - (24 * 3600))).to eq(:reapply)
+    end
+
+    it "keeps a post the failure mode published open for a late verdict, then purges it" do
+      auto = { "status" => "auto_published", "handled_at" => now - 60 }
+      expect(needs(auto)).to be_nil
+      expect(needs(auto.merge("handled_at" => now - (30 * 24 * 3600) - 1))).to eq(:purge)
     end
 
     it "purges a finished entry after thirty days" do

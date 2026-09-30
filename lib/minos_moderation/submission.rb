@@ -40,7 +40,9 @@ module MinosModeration
     # @return [void]
     def run
       return unless Settings.enabled?
-      return unless claim
+
+      attempt = claim
+      return unless attempt
 
       reviewable = ::ReviewableQueuedPost.find_by(id: @id)
       return VerdictApplier.new(@id).finish("resolved_elsewhere") unless reviewable&.pending?
@@ -56,24 +58,28 @@ module MinosModeration
       Store.update(@id) do |entry|
         entry.merge("text_digest" => text[:digest], "truncated" => text[:truncated])
       end
+      meta = {
+        "links" => Text.link_count(raw),
+        "author_first_post" => first_post?(reviewable.target_created_by),
+      }
+      domains = link_domains(raw)
+      meta["link_domains"] = domains if domains.any?
       body =
         Scores.request_body(
-          item_id: Scores.item_id(@id),
+          item_id: Scores.item_id(@id, attempt),
           text: text[:text],
           profile: Settings.profile,
-          meta: {
-            "links" => Text.link_count(raw),
-            "author_first_post" => first_post?(reviewable.target_created_by),
-          },
+          meta: meta,
         )
       handle(send_request(endpoint, key, body))
     end
 
     private
 
-    # Marks the entry as being sent, if it is due.
+    # Marks the entry as being sent, if it is due, and numbers the attempt: its item id is
+    # `discourse:<id>.<attempt>`, and only a verdict for the latest attempt is taken.
     #
-    # @return [Boolean] whether this attempt goes ahead.
+    # @return [Integer, nil] the attempt's number, or nil when nothing is due.
     def claim
       now = Time.now.to_i
       claimed =
@@ -84,9 +90,35 @@ module MinosModeration
                 entry["status"] == "sending" &&
                   now - entry["sending_at"].to_i > Decision::STALE_SENDING_S
               )
-          entry.merge("status" => "sending", "sending_at" => now) if due
+          next nil unless due
+
+          attempt = entry["attempts"].to_i + 1
+          entry.merge(
+            "status" => "sending",
+            "sending_at" => now,
+            "attempts" => attempt,
+            "attempt" => attempt,
+          )
         end
-      !claimed.nil?
+      claimed && claimed["attempt"]
+    end
+
+    # The registrable domains the post links to, images included, for `link_domains`.
+    #
+    # @param raw [String] the post's raw Markdown.
+    # @return [Array<String>] at most ten distinct domains; empty without the public
+    #   suffix list (the `public_suffix` gem, which Discourse bundles through addressable).
+    def link_domains(raw)
+      return [] unless defined?(::PublicSuffix)
+
+      domains =
+        Text.link_hosts(raw).filter_map do |host|
+          domain = ::PublicSuffix.domain(host)
+          domain if domain.is_a?(String) && Scores::DOMAIN.match?(domain)
+        rescue StandardError
+          nil
+        end
+      domains.uniq.first(Scores::MAX_LINK_DOMAINS)
     end
 
     # @return [Scores::Outcome] the gateway's answer, read.
@@ -118,11 +150,7 @@ module MinosModeration
         # A fast gateway may have delivered the verdict already: keep what it recorded.
         next nil unless entry["status"] == "sending"
 
-        entry.merge(
-          "status" => "submitted",
-          "submitted_at" => now,
-          "attempts" => entry["attempts"].to_i + 1,
-        )
+        entry.merge("status" => "submitted", "submitted_at" => now)
       end
       Store.clear_problem
     end
@@ -133,9 +161,8 @@ module MinosModeration
       Store.update(@id) do |entry|
         next nil unless entry["status"] == "sending"
 
-        attempts = entry["attempts"].to_i + 1
-        delay = Scores.backoff(attempts, outcome.retry_in)
-        entry.merge("status" => "queued", "attempts" => attempts, "retry_at" => now + delay)
+        delay = Scores.backoff(entry["attempts"].to_i, outcome.retry_in)
+        entry.merge("status" => "queued", "retry_at" => now + delay)
       end
       return unless delay
 

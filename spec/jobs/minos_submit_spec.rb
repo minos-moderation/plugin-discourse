@@ -35,7 +35,7 @@ RSpec.describe Jobs::MinosSubmit do
   end
 
   def answer(status, blad = nil)
-    body = blad ? { "blad" => blad } : { "przyjete" => ["discourse:#{reviewable.id}"] }
+    body = blad ? { "blad" => blad } : { "przyjete" => ["discourse:#{reviewable.id}.1"] }
     stub_request(:post, endpoint).to_return(status: status, body: body.to_json)
   end
 
@@ -45,13 +45,13 @@ RSpec.describe Jobs::MinosSubmit do
       .with(headers: { "X-Gateway-Key" => key, "Content-Type" => "application/json" })
       .to_return do |request|
         sent = request.body
-        { status: 202, body: { "przyjete" => ["discourse:#{reviewable.id}"] }.to_json }
+        { status: 202, body: { "przyjete" => ["discourse:#{reviewable.id}.1"] }.to_json }
       end
 
     run_job
 
     item = JSON.parse(sent)["elementy"].sole
-    expect(item["id"]).to eq("discourse:#{reviewable.id}")
+    expect(item["id"]).to eq("discourse:#{reviewable.id}.1")
     expected = MinosModeration::Text.for_submission(reviewable.payload["raw"])[:text]
     expect(item["tekst"]).to eq(expected)
     expect(item["profil"]).to eq("forum_adult")
@@ -64,6 +64,32 @@ RSpec.describe Jobs::MinosSubmit do
     end
     expect(entry["status"]).to eq("submitted")
     expect(entry["text_digest"]).to be_present
+  end
+
+  it "sends the registrable domains the post links to" do
+    image = "![x](https://cdn.example.co.uk/i.png)"
+    reviewable.payload["raw"] = "Zobacz https://www.example.com/a i #{image}"
+    reviewable.save!
+    sent = nil
+    stub_request(:post, endpoint).to_return do |request|
+      sent = JSON.parse(request.body)
+      { status: 202, body: "{}" }
+    end
+    run_job
+    expect(sent["elementy"][0]["meta"]["link_domains"]).to eq(%w[example.com example.co.uk])
+  end
+
+  it "numbers every attempt in the item id" do
+    ids = []
+    stub_request(:post, endpoint).to_return do |request|
+      ids << JSON.parse(request.body)["elementy"][0]["id"]
+      { status: 503, body: { "blad" => { "kod" => "kolejka_niedostepna" } }.to_json }
+    end
+    run_job
+    MinosModeration::Store.set(reviewable.id, entry.merge("retry_at" => now))
+    run_job
+    expect(ids).to eq(["discourse:#{reviewable.id}.1", "discourse:#{reviewable.id}.2"])
+    expect(entry["attempt"]).to eq(2)
   end
 
   it "sends the profile the administrator chose" do
@@ -132,11 +158,19 @@ RSpec.describe Jobs::MinosSubmit do
       )
     end
 
-    it "publishes the post under fail-open" do
+    it "publishes the post under fail-open, and keeps it open for a late verdict" do
       SiteSetting.minos_failure_mode = "fail-open"
       run_job
       expect(reviewable.reload).to be_approved
-      expect(entry["outcome"]).to eq("approve")
+      expect(entry).to include("status" => "auto_published", "post_id" => reviewable.target_id)
+    end
+
+    it "leaves a post Discourse held itself to the moderators even under fail-open" do
+      SiteSetting.minos_failure_mode = "fail-open"
+      MinosModeration::Store.set(reviewable.id, entry.merge("core_hold" => "post_count"))
+      run_job
+      expect(reviewable.reload).to be_pending
+      expect(entry).to include("status" => "done", "reason" => "core_hold")
     end
 
     it "logs the status and the code, never the key or the text" do

@@ -6,14 +6,17 @@ module MinosModeration
   # One entry per held post, `pending:<reviewable id>`, with string keys:
   #
   # - `status`: `queued` (waiting to be sent, or for a retry), `sending`, `submitted` (the
-  #   gateway answered `202`), `received` (a verdict arrived and waits for its job) or
-  #   `done`;
+  #   gateway answered `202`), `received` (a verdict arrived and waits for its job),
+  #   `auto_published` (the failure mode published the post; a late verdict is still
+  #   taken) or `done`;
   # - times in epoch seconds: `queued_at`, `retry_at`, `sending_at`, `submitted_at`,
   #   `received_at`, `handled_at`;
-  # - `attempts`; `core_hold` (the reason Discourse itself held the post, if it did);
-  #   `text_digest` and `truncated` (what was sent, without the text); `verdict` (the parsed
-  #   payload, minus `ocenzurowany` once applied); `original` (the raw text, kept only when
-  #   a masked version was published); `outcome` (what was done).
+  # - `attempts` and `attempt` (the current attempt, the suffix of the item id);
+  #   `core_hold` (the reason Discourse itself held the post, if it did); `text_digest` and
+  #   `truncated` (what was sent, without the text); `verdict` (the parsed payload, minus
+  #   `ocenzurowany` once applied); `original_digest` and `original_title_digest` (never
+  #   the unmasked text); `post_id` (of a post the failure mode published); `outcome` and
+  #   `reason` (what was done, and why).
   #
   # Plus `problem`: the gateway's last refusal of the forum's configuration, for the admin
   # dashboard. Every read-modify-write of an entry happens under {lock}.
