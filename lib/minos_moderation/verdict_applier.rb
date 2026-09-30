@@ -20,6 +20,35 @@ module MinosModeration
       @id = Integer(reviewable_id)
     end
 
+    # Applies a received verdict (`Receiver`), once.
+    #
+    # A post whose text changed in the queue since it was sent, or that Discourse holds
+    # for its own reasons, only gets the verdict as a note; see `Decision.for_verdict`.
+    #
+    # @return [void]
+    def apply_verdict
+      Store.lock(@id) do
+        entry = Store.get(@id)
+        next unless entry && entry["status"] == "received"
+
+        verdict = entry["verdict"].to_h
+        reviewable = pending_reviewable
+        unless reviewable
+          next close(entry.merge("verdict" => verdict.except("ocenzurowany")), "resolved_elsewhere")
+        end
+
+        decision =
+          Decision.for_verdict(
+            verdict,
+            Settings.decision,
+            truncated: entry["truncated"] == true,
+            core_hold: entry["core_hold"].present?,
+            edited: edited?(reviewable, entry),
+          )
+        execute(reviewable, entry, decision, verdict)
+      end
+    end
+
     # Applies the failure mode to a post that will get no verdict.
     #
     # @param reason [Symbol] `:timeout`, `:config` or `:no_text`.
@@ -48,6 +77,12 @@ module MinosModeration
     end
 
     private
+
+    # @return [Boolean] whether the post no longer reads as the text that was assessed.
+    def edited?(reviewable, entry)
+      digest = entry["text_digest"]
+      digest.nil? || Text.for_submission(reviewable.payload["raw"].to_s)[:digest] != digest
+    end
 
     # @return [ReviewableQueuedPost, nil] the post's reviewable, while it is still pending.
     def pending_reviewable
