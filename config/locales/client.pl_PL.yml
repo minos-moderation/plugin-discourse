@@ -1,0 +1,6 @@
+# Polish, like the server strings; the pl_PL and en files carry the same text on purpose
+# (docs/development.md). The plugin has no client-side UI yet.
+pl_PL:
+  js:
+    minos_moderation:
+      title: "Minos — moderacja postów"
