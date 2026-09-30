@@ -12,8 +12,8 @@ module MinosModeration
   #
   # Callers must not hold `Store.lock` for the same post: every public method takes it.
   class VerdictApplier
-    # Entry states that still wait for an outcome.
-    OPEN = %w[queued sending submitted].freeze
+    # Entry states the failure mode no longer applies to: a verdict arrived, or it is over.
+    CLOSED = %w[received done].freeze
 
     # @param reviewable_id [Integer] the held post's reviewable.
     def initialize(reviewable_id)
@@ -56,7 +56,9 @@ module MinosModeration
     def apply_failure(reason)
       Store.lock(@id) do
         entry = Store.get(@id)
-        next unless entry && OPEN.include?(entry["status"])
+        # Any state but a received verdict or a finished entry: an entry the plugin does not
+        # understand gets the failure mode rather than waiting forever.
+        next if entry.nil? || CLOSED.include?(entry["status"])
 
         reviewable = pending_reviewable
         next close(entry, "resolved_elsewhere") unless reviewable
