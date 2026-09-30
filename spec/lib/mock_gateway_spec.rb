@@ -166,10 +166,11 @@ RSpec.describe "The plugin against the mock gateway" do
     expect(by_id(received, 6).size).to eq(2)
     expect(by_id(received, 7).first[:payload]["wersja"]).to be_nil
 
-    # Whatever the mock's masking, a mask is never undone on the way back to Markdown.
+    # The mock masks per character (client-php f85c6ed), so its masks map back exactly.
+    expect(censored["ocenzurowany"].length).to eq(sent[3].length)
     masked = MinosModeration::Text.apply_masks(cases[3], sent[3], censored["ocenzurowany"])
-    masked_raw = masked && masked[:raw]
-    expect(masked_raw.nil? || !masked_raw.include?("fragmentem")).to be(true)
+    expect(masked).not_to be_nil
+    expect(masked[:raw]).to eq(cases[3].sub("fragmentem", "█" * "fragmentem".length))
   end
 
   it "refuses deliveries signed wrongly or too long ago" do

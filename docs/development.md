@@ -94,9 +94,13 @@ git clone https://github.com/minos-moderation/client-php.git ../client-php
 MINOS_CLIENT_PHP=../client-php bundle exec rspec spec/lib/mock_gateway_spec.rb
 ```
 
-Without `MINOS_CLIENT_PHP` that group is skipped. CI sets
-`MINOS_REQUIRE_MOCK_GATEWAY=1`, which turns the skip into a failure, and checks
-client-php out at a pinned commit (`.github/workflows/tests.yml`).
+Without `MINOS_CLIENT_PHP` that group is skipped. CI's `standalone` job checks client-php
+out at a pinned commit of its main (`.github/workflows/tests.yml`, fb8d1ff at present),
+runs `composer install --no-dev` there, sets `MINOS_REQUIRE_MOCK_GATEWAY=1`, which turns
+the skip into a failure, and then reads the JSON report: any pending example, or a
+mock-gateway example that did not pass, fails the job. The Discourse tier keeps the
+group pending: it runs inside Discourse's own test container through the reusable
+workflow, which has no PHP and no step of ours to install it.
 
 **Discourse tier** — `spec/requests`, `spec/jobs`, `spec/integration`, written for the
 plugin harness (`fab!`, `Fabricate`, `SiteSetting`, `stub_request`,
@@ -136,11 +140,10 @@ user. Discourse's `FinalDestination` refuses private addresses unless the host i
 forum's own (`localhost` in development) or listed in `allowed_internal_hosts`; use
 `localhost`, not `127.0.0.1`, in the URL.
 
-**A known difference.** The mock masks a `[[fragment]]` marker without its brackets, so
-its `ocenzurowany` is four characters shorter than the text that was sent. The plugin
-carries masks back only when the masked text has the sent text's length (the contract's
-"`█` per character"), so with the mock a censored post is always left to the moderators
-(`mask_unmappable`). The real gateway masks per character.
+The mock masks every `[[fragment]]` per character and keeps the brackets (client-php
+f85c6ed), so `ocenzurowany` has the sent text's length, as the contract says, and the
+plugin carries its masks back onto the Markdown. An older mock dropped the brackets, and
+with it every censored post was left to the moderators (`mask_unmappable`).
 
 ## Locales
 

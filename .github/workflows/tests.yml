@@ -12,8 +12,9 @@ jobs:
   # The specs that need no Discourse: the signature on the gateway's vector, the payload
   # reader, the request and its answers, the text and its masks, every publish/hold
   # decision, the Claude Code rules, the locales, and the wire code against the mock
-  # gateway of client-php over real HTTP. A skip here is a failure: the mock spec is
-  # required (MINOS_REQUIRE_MOCK_GATEWAY).
+  # gateway of client-php over real HTTP. A skip here is a failure, twice over: the mock
+  # spec raises without the mock (MINOS_REQUIRE_MOCK_GATEWAY), and the last step fails on
+  # any pending example and unless every mock-gateway example passed.
   standalone:
     name: standalone (rspec, no Discourse)
     runs-on: ubuntu-latest
@@ -26,7 +27,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: minos-moderation/client-php
-          ref: fc4beb7625c9119315a560fd04c4c2e49e49f6ae
+          # client-php's main at fb8d1ff, which includes f85c6ed (the mock's masks keep the
+          # sent text's length).
+          ref: fb8d1ffe3be6d1da2f0227c671dfebc44c19554e
           path: tmp/client-php
       - uses: ruby/setup-ruby@v1
         with:
@@ -36,8 +39,27 @@ jobs:
         run: |
           php --version
           php -m | grep -qix curl
+      - name: Install client-php (no dev dependencies)
+        working-directory: tmp/client-php
+        run: composer install --no-dev --no-interaction --no-progress
       - name: Specs
-        run: bundle exec rspec spec/lib spec/repo
+        run: >-
+          bundle exec rspec spec/lib spec/repo
+          --format progress --format json --out tmp/rspec-report.json
+      - name: Every example ran, the mock gateway's included
+        run: |
+          ruby - <<'RUBY'
+          require "json"
+          report = JSON.parse(File.read("tmp/rspec-report.json"))
+          summary = report.fetch("summary")
+          puts report.fetch("summary_line")
+          mock = report.fetch("examples").select { |e| e["file_path"].include?("mock_gateway_spec") }
+          abort "pending examples: #{summary["pending_count"]}" unless summary["pending_count"].zero?
+          abort "no mock gateway example ran" if mock.empty?
+          failed = mock.reject { |e| e["status"] == "passed" }
+          abort "mock gateway examples not passed: #{failed.size}" unless failed.empty?
+          puts "mock gateway examples passed: #{mock.size}"
+          RUBY
 
   # The specs that need Discourse (spec/requests, spec/jobs, spec/integration), run by
   # Discourse's own plugin workflow against core's `latest`. Its linting job is skipped:
