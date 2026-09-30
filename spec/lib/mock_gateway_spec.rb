@@ -163,7 +163,8 @@ RSpec.describe "The plugin against the mock gateway" do
     expect(by_id(received, 7).first[:payload]["wersja"]).to be_nil
 
     # Whatever the mock's masking, a mask is never undone on the way back to Markdown.
-    masked_raw = MinosModeration::Text.apply_masks(cases[3], sent[3], censored["ocenzurowany"])
+    masked = MinosModeration::Text.apply_masks(cases[3], sent[3], censored["ocenzurowany"])
+    masked_raw = masked && masked[:raw]
     expect(masked_raw.nil? || !masked_raw.include?("fragmentem")).to be(true)
   end
 

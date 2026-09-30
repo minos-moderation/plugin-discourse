@@ -5,16 +5,16 @@ require "digest"
 module MinosModeration
   # The text of a post as the gateway sees it, and the way back from a masked verdict.
   #
-  # **What is sent.** The raw Markdown with markup tokens removed where that is cheap and
-  # certain (see {MARKUP}), trimmed and cut to its FIRST {MAX_CHARS} characters, the
-  # contract's limit per item. No text a reader can see is dropped for being "only" a
-  # quote, a spoiler or a summary: removing it would let anyone smuggle words past the
-  # gateway inside `[quote]…[/quote]`. HTML is sent as it is, attributes included, for the
-  # same reason.
+  # **What is sent.** A new topic's title, a blank line, then the raw Markdown with markup
+  # tokens removed where that is cheap and certain (see {MARKUP}); trimmed and cut to its
+  # FIRST {MAX_CHARS} characters, the contract's limit per item. A reply has no title.
+  # No text a reader can see is dropped for being "only" a quote, a spoiler or a summary:
+  # removing it would let anyone smuggle words past the gateway inside
+  # `[quote]…[/quote]`. HTML is sent as it is, attributes included, for the same reason.
   #
   # **What comes back.** `ocenzurowany` masks the sent text one `█` per character. Every
-  # sent character remembers the raw character it came from, so {apply_masks} masks
-  # exactly those raw characters, and refuses (nil) whenever a mask falls on a character
+  # sent character remembers the title or raw character it came from, so {apply_masks}
+  # masks exactly those characters, and refuses (nil) whenever a mask falls on a character
   # the reduction made up or the sent text no longer matches the post.
   #
   # Plain Ruby: no Rails, so the standalone tier runs it without Discourse.
@@ -65,12 +65,13 @@ module MinosModeration
     # The text the gateway assesses for one post.
     #
     # @param raw [String, nil] the post's raw Markdown.
+    # @param title [String, nil] the topic's title, for the first post of a new topic.
     # @return [Hash{Symbol => Object}] `:text` (at most {MAX_CHARS} characters; empty only
     #   for a post without any text), `:truncated` (whether characters beyond the limit were
     #   left out, so a verdict covers only the beginning) and `:digest` (SHA-256 of the
     #   sent text, to notice a post edited in the queue after it was sent).
-    def self.for_submission(raw)
-      chars, _origins, truncated = submission(raw)
+    def self.for_submission(raw, title = nil)
+      chars, _origins, truncated = submission(raw, title)
       text = chars.join
       { text: text, truncated: truncated, digest: Digest::SHA256.hexdigest(text) }
     end
@@ -81,38 +82,45 @@ module MinosModeration
       [clean(raw).scan(LINK).size, MAX_SIGNAL].min
     end
 
-    # Carries the gateway's masks from the sent text back onto the raw Markdown.
+    # Carries the gateway's masks from the sent text back onto the title and the Markdown.
     #
     # @param raw [String] the post's raw Markdown, as it is now.
     # @param sent [String] the text that was sent for it ({for_submission}`[:text]`).
     # @param masked [String] the gateway's `ocenzurowany`.
-    # @return [String, nil] the Markdown with exactly the masked characters replaced by
-    #   {MASK}; nil when `raw` no longer reduces to `sent`, when `masked` differs from
-    #   `sent` other than by masks, or when a mask falls on a character with no origin in
-    #   `raw`. Nil means: do not publish, hold the post.
-    def self.apply_masks(raw, sent, masked)
+    # @param title [String, nil] the topic's title, as it is now, for a new topic.
+    # @return [Hash{Symbol => String}, nil] `:raw` and `:title` (nil without a title) with
+    #   exactly the masked characters replaced by {MASK}; nil when the post no longer
+    #   reduces to `sent`, when `masked` differs from `sent` other than by masks, or when a
+    #   mask falls on a character with no origin. Nil means: do not publish, hold the post.
+    def self.apply_masks(raw, sent, masked, title: nil)
       return nil unless [raw, sent, masked].all? { |value| value.is_a?(String) }
       return nil unless masked.valid_encoding? && sent.valid_encoding?
 
-      chars, origins, _truncated = submission(raw)
+      chars, origins, _truncated = submission(raw, title)
       return nil unless chars.join == sent && masked.length == sent.length
 
-      result = clean(raw).chars
+      body = clean(raw).chars
+      heading = clean(title).chars
       masked.each_char.with_index do |char, index|
         next if char == chars[index]
-        return nil unless char == MASK && origins[index]
 
-        result[origins[index]] = MASK
+        origin = origins[index]
+        return nil unless char == MASK && origin
+
+        # Title characters carry negative origins: -1 is the title's first character.
+        origin.negative? ? heading[-origin - 1] = MASK : body[origin] = MASK
       end
-      result.join
+      { raw: body.join, title: title.nil? ? nil : heading.join }
     end
 
     # The sent text of a post, character by character, with each character's origin.
     #
     # @param raw [String, nil] the post's raw Markdown.
-    # @return [Array] the characters, their positions in the cleaned raw text (nil for
-    #   made-up characters) and whether the text was cut.
-    def self.submission(raw)
+    # @param title [String, nil] the topic's title, for a new topic.
+    # @return [Array] the characters, their origins (a position in the cleaned raw text;
+    #   `-1 - i` for the title's character `i`; nil for made-up characters) and whether
+    #   the text was cut.
+    def self.submission(raw, title)
       chars, origins = reduce(raw)
       if chars.empty?
         # Markup only (an image without alt text, say): the raw text is sent rather than
@@ -120,6 +128,13 @@ module MinosModeration
         chars = clean(raw).chars
         origins = (0...chars.length).to_a
         chars, origins = trim(chars, origins)
+      end
+      heading = clean(title).chars
+      heading, heading_origins = trim(heading, (0...heading.length).map { |i| -1 - i })
+      unless heading.empty?
+        separator = chars.empty? ? [] : ["\n", "\n"]
+        chars = heading + separator + chars
+        origins = heading_origins + ([nil] * separator.size) + origins
       end
       truncated = chars.length > MAX_CHARS
       chars, origins = trim(chars.first(MAX_CHARS), origins.first(MAX_CHARS)) if truncated

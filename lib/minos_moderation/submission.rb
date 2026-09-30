@@ -50,7 +50,7 @@ module MinosModeration
       return VerdictApplier.new(@id).apply_failure(:config) if endpoint.nil? || key.empty?
 
       raw = reviewable.payload["raw"].to_s
-      text = Text.for_submission(raw)
+      text = Text.for_submission(raw, reviewable.payload["title"])
       return VerdictApplier.new(@id).apply_failure(:no_text) if text[:text].empty?
 
       Store.update(@id) do |entry|

@@ -83,7 +83,8 @@ module MinosModeration
     # @return [Boolean] whether the post no longer reads as the text that was assessed.
     def edited?(reviewable, entry)
       digest = entry["text_digest"]
-      digest.nil? || Text.for_submission(reviewable.payload["raw"].to_s)[:digest] != digest
+      payload = reviewable.payload
+      digest.nil? || Text.for_submission(payload["raw"].to_s, payload["title"])[:digest] != digest
     end
 
     # @return [ReviewableQueuedPost, nil] the post's reviewable, while it is still pending.
@@ -126,21 +127,27 @@ module MinosModeration
       end
     end
 
-    # Publishes the masked text, keeping the original in the entry.
+    # Publishes the masked text (and title, for a new topic), keeping the originals in the
+    # entry.
     #
     # @return [Array(Decision::Result, Hash)] what was done, and fields for the entry.
     def approve_masked(reviewable, decision, verdict)
       return [instead(decision, :topic_closed), {}] if reviewable.topic&.closed?
 
       raw = reviewable.payload["raw"].to_s
-      sent = Text.for_submission(raw)[:text]
-      masked = Text.apply_masks(raw, sent, verdict && verdict["ocenzurowany"])
+      title = reviewable.payload["title"]
+      sent = Text.for_submission(raw, title)[:text]
+      masked = Text.apply_masks(raw, sent, verdict && verdict["ocenzurowany"], title: title)
       return [instead(decision, :mask_unmappable), {}] unless masked
 
       # String keys: the payload is a JSON column, and a symbol key would add a second
       # "raw" to it.
-      reviewable.update_fields({ payload: { "raw" => masked } }, ::Discourse.system_user)
-      [act(reviewable, :approve_post, decision), { "original" => raw }]
+      changes = { "raw" => masked[:raw] }
+      changes["title"] = masked[:title] if title
+      reviewable.update_fields({ payload: changes }, ::Discourse.system_user)
+      originals = { "original" => raw }
+      originals["original_title"] = title if title && masked[:title] != title
+      [act(reviewable, :approve_post, decision), originals]
     end
 
     # @return [Decision::Result] the decision, or a `:leave` when the action failed.

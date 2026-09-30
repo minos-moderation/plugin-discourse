@@ -61,6 +61,37 @@ RSpec.describe Jobs::MinosApplyVerdict do
       expect(notes.join).to include("wulgaryzmy")
     end
 
+    it "masks a new topic's title as well as its first post" do
+      queued = Fabricate(:reviewable_queued_post_topic)
+      topic_raw = queued.payload["raw"]
+      title = queued.payload["title"]
+      topic_sent = MinosModeration::Text.for_submission(topic_raw, title)
+      MinosModeration::Store.set(
+        queued.id,
+        {
+          "status" => "received",
+          "received_at" => Time.now.to_i,
+          "text_digest" => topic_sent[:digest],
+          "truncated" => false,
+          "core_hold" => nil,
+          "verdict" =>
+            assessed(
+              "ocenzurowane",
+              "id" => "discourse:#{queued.id}",
+              "ocenzurowany" => topic_sent[:text].sub("title", mask * 5).sub("world", mask * 5),
+            ),
+        },
+      )
+      described_class.new.execute(reviewable_id: queued.id)
+
+      published = Post.find(queued.reload.target_id)
+      expect(published.raw).to eq(topic_raw.sub("world", mask * 5))
+      # Discourse may prettify a title (capitals), so the check is on the words.
+      expect(published.topic.title).to include(mask * 5)
+      expect(published.topic.title).not_to include("title")
+      expect(MinosModeration::Store.get(queued.id)["original_title"]).to eq(title)
+    end
+
     it "leaves the post when the administrator chose so" do
       SiteSetting.minos_censored_action = "zostaw_moderatorom"
       receive(assessed("ocenzurowane", "ocenzurowany" => masked))

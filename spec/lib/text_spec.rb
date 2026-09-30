@@ -91,6 +91,11 @@ RSpec.describe "MinosModeration::Text" do
   end
 
   describe "carrying masks back onto the Markdown" do
+    # The masked Markdown of a reply (no title), or nil.
+    def body_masks(raw, sent, masked)
+      text.apply_masks(raw, sent, masked)&.fetch(:raw)
+    end
+
     def verdict_for(raw, word)
       sent = text.for_submission(raw)[:text]
       [sent, sent.gsub(word) { mask * word.length }]
@@ -99,34 +104,34 @@ RSpec.describe "MinosModeration::Text" do
     it "masks exactly the masked characters of a plain post" do
       raw = "to jest głupi pomysł, głupi"
       sent, masked = verdict_for(raw, "głupi")
-      expect(text.apply_masks(raw, sent, masked)).to eq(masked)
+      expect(body_masks(raw, sent, masked)).to eq(masked)
     end
 
     it "masks a word inside Markdown and keeps the markup around it" do
       raw = "# Tytuł\r\n\r\nTo jest **głupi** pomysł, [link](https://example.test)"
       sent, masked = verdict_for(raw, "głupi")
-      result = text.apply_masks(raw, sent, masked)
+      result = body_masks(raw, sent, masked)
       expect(result).to eq(raw.sub("głupi", mask * 5))
     end
 
     it "masks a word that markup splits in two" do
       raw = "gł**upi** tekst"
       sent, masked = verdict_for(raw, "głupi")
-      expect(text.apply_masks(raw, sent, masked)).to eq("#{mask * 2}**#{mask * 3}** tekst")
+      expect(body_masks(raw, sent, masked)).to eq("#{mask * 2}**#{mask * 3}** tekst")
     end
 
     it "masks only the occurrence the gateway masked" do
       raw = "kot i kot"
       sent = text.for_submission(raw)[:text]
       masked = "#{mask * 3} i kot"
-      expect(text.apply_masks(raw, sent, masked)).to eq(masked)
+      expect(body_masks(raw, sent, masked)).to eq(masked)
     end
 
     it "masks inside the assessed beginning of a truncated post" do
       raw = "zły " + "a" * 3100
       sent = text.for_submission(raw)[:text]
       masked = "#{mask * 3}#{sent[3..]}"
-      result = text.apply_masks(raw, sent, masked)
+      result = body_masks(raw, sent, masked)
       expect(result).to start_with("#{mask * 3} a")
       expect(result.length).to eq(raw.length)
     end
@@ -135,35 +140,35 @@ RSpec.describe "MinosModeration::Text" do
       raw = "[opis](https://example.test)"
       sent = text.for_submission(raw)[:text]
       masked = sent.sub(" ", mask)
-      expect(text.apply_masks(raw, sent, masked)).to be_nil
+      expect(body_masks(raw, sent, masked)).to be_nil
     end
 
     it "refuses a change that is not a mask" do
       raw = "to jest tekst"
       sent = text.for_submission(raw)[:text]
-      expect(text.apply_masks(raw, sent, sent.sub("tekst", "TEKST"))).to be_nil
+      expect(body_masks(raw, sent, sent.sub("tekst", "TEKST"))).to be_nil
     end
 
     it "refuses masks of another length" do
       raw = "to jest tekst"
       sent = text.for_submission(raw)[:text]
-      expect(text.apply_masks(raw, sent, "#{sent}#{mask}")).to be_nil
+      expect(body_masks(raw, sent, "#{sent}#{mask}")).to be_nil
     end
 
     it "refuses when the post no longer reads as the text that was sent" do
       sent, masked = verdict_for("to jest głupi pomysł", "głupi")
-      expect(text.apply_masks("to jest inny pomysł", sent, masked)).to be_nil
+      expect(body_masks("to jest inny pomysł", sent, masked)).to be_nil
     end
 
     it "refuses what is not text" do
-      expect(text.apply_masks("a", "a", nil)).to be_nil
-      expect(text.apply_masks(nil, "a", mask)).to be_nil
+      expect(body_masks("a", "a", nil)).to be_nil
+      expect(body_masks(nil, "a", mask)).to be_nil
     end
 
     it "leaves the post as it is when nothing was masked" do
       raw = "**nic** tu nie ma"
       sent = text.for_submission(raw)[:text]
-      expect(text.apply_masks(raw, sent, sent)).to eq(raw)
+      expect(body_masks(raw, sent, sent)).to eq(raw)
     end
 
     it "always produces Markdown whose sent text carries every mask of the verdict" do
@@ -179,7 +184,7 @@ RSpec.describe "MinosModeration::Text" do
 
           masked = sent.dup
           masked[index] = mask
-          result = text.apply_masks(raw, sent, masked)
+          result = body_masks(raw, sent, masked)
           next if result.nil?
 
           checked += 1
@@ -187,6 +192,46 @@ RSpec.describe "MinosModeration::Text" do
         end
       end
       expect(checked).to be > 30, "almost every mask was refused: the property checks nothing"
+    end
+  end
+
+  describe "a new topic's title" do
+    it "is sent first, then a blank line, then the post" do
+      sent = text.for_submission("Treść **pierwszego** posta.", "  Tytuł tematu ")
+      expect(sent[:text]).to eq("Tytuł tematu\n\nTreść pierwszego posta.")
+    end
+
+    it "counts toward the 3000 characters" do
+      sent = text.for_submission("b" * 3000, "Tytuł")
+      expect(sent[:text]).to start_with("Tytuł\n\nbbb")
+      expect(sent[:text].length).to eq(3000)
+      expect(sent[:truncated]).to be(true)
+    end
+
+    it "changes the digest when only the title changes" do
+      expect(text.for_submission("treść", "Tytuł A")[:digest]).not_to eq(
+        text.for_submission("treść", "Tytuł B")[:digest],
+      )
+    end
+
+    it "gets its own masks back, apart from the post's" do
+      raw = "To **głupi** pomysł."
+      title = "Głupi tytuł"
+      sent = text.for_submission(raw, title)[:text]
+      masked = sent.sub("Głupi", mask * 5).sub("głupi", mask * 5)
+      result = text.apply_masks(raw, sent, masked, title: title)
+      expect(result).to eq(raw: "To **#{mask * 5}** pomysł.", title: "#{mask * 5} tytuł")
+    end
+
+    it "refuses a mask on the blank line between them" do
+      raw = "treść"
+      sent = text.for_submission(raw, "Tytuł")[:text]
+      masked = sent.sub("\n\n", mask * 2)
+      expect(text.apply_masks(raw, sent, masked, title: "Tytuł")).to be_nil
+    end
+
+    it "sends the title alone when the post has no text at all" do
+      expect(text.for_submission("", "Sam tytuł")[:text]).to eq("Sam tytuł")
     end
   end
 end
