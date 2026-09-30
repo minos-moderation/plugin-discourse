@@ -12,7 +12,10 @@ RSpec.describe Jobs::MinosApplyVerdict do
 
   before { SiteSetting.minos_enabled = true }
 
-  def receive(verdict, **entry)
+  # Stores a received verdict for the queued post and runs the job on it. Both arguments
+  # are positional Hashes: a braceless `"status" => …` must not be read as keywords.
+  # (Named `apply_verdict`, not `receive`, which is rspec-mocks' matcher.)
+  def apply_verdict(verdict, entry = {})
     MinosModeration::Store.set(
       reviewable.id,
       {
@@ -23,7 +26,7 @@ RSpec.describe Jobs::MinosApplyVerdict do
         "truncated" => false,
         "core_hold" => nil,
         "verdict" => { "id" => "discourse:#{reviewable.id}", "kategorie" => [] }.merge(verdict),
-      }.merge(entry.transform_keys(&:to_s)),
+      }.merge(entry),
     )
     described_class.new.execute(reviewable_id: reviewable.id)
     reviewable.reload
@@ -42,7 +45,7 @@ RSpec.describe Jobs::MinosApplyVerdict do
   end
 
   it "publishes bezpieczne and notes it" do
-    receive(assessed("bezpieczne"))
+    apply_verdict(assessed("bezpieczne"))
     expect(reviewable).to be_approved
     expect(Post.find(reviewable.target_id).raw).to eq(raw)
     expect(entry).to include("status" => "done", "outcome" => "approve")
@@ -53,7 +56,8 @@ RSpec.describe Jobs::MinosApplyVerdict do
     let(:masked) { sent[:text].sub("world", mask * 5) }
 
     it "publishes the masked text and keeps the original" do
-      receive(assessed("ocenzurowane", "kategorie" => ["wulgaryzmy"], "ocenzurowany" => masked))
+      verdict = assessed("ocenzurowane", "kategorie" => ["wulgaryzmy"], "ocenzurowany" => masked)
+      apply_verdict(verdict)
       expect(reviewable).to be_approved
       expect(Post.find(reviewable.target_id).raw).to eq(raw.sub("world", mask * 5))
       expect(entry["original"]).to eq(raw)
@@ -94,13 +98,13 @@ RSpec.describe Jobs::MinosApplyVerdict do
 
     it "leaves the post when the administrator chose so" do
       SiteSetting.minos_censored_action = "zostaw_moderatorom"
-      receive(assessed("ocenzurowane", "ocenzurowany" => masked))
+      apply_verdict(assessed("ocenzurowane", "ocenzurowany" => masked))
       expect(reviewable).to be_pending
       expect(entry).to include("outcome" => "leave", "reason" => "censored_setting")
     end
 
     it "leaves the post when the masks cannot be carried onto it" do
-      receive(assessed("ocenzurowane", "ocenzurowany" => "#{mask}#{sent[:text][1..]}X"))
+      apply_verdict(assessed("ocenzurowane", "ocenzurowany" => "#{mask}#{sent[:text][1..]}X"))
       expect(reviewable).to be_pending
       expect(entry["reason"]).to eq("mask_unmappable")
     end
@@ -108,20 +112,20 @@ RSpec.describe Jobs::MinosApplyVerdict do
 
   describe "zablokowane" do
     it "leaves the post by default" do
-      receive(assessed("zablokowane", "kategorie" => ["nekanie"]))
+      apply_verdict(assessed("zablokowane", "kategorie" => ["nekanie"]))
       expect(reviewable).to be_pending
       expect(entry["reason"]).to eq("blocked_setting")
     end
 
     it "rejects the post when the administrator chose so" do
       SiteSetting.minos_blocked_action = "odrzuc"
-      receive(assessed("zablokowane"))
+      apply_verdict(assessed("zablokowane"))
       expect(reviewable).to be_rejected
     end
 
     it "never rejects a post that reads as self-harm, and asks for support" do
       SiteSetting.minos_blocked_action = "odrzuc"
-      receive(assessed("zablokowane", "kategorie" => ["samookaleczenie"], "wsparcie" => true))
+      apply_verdict(assessed("zablokowane", "kategorie" => ["samookaleczenie"], "wsparcie" => true))
       expect(reviewable).to be_pending
       expect(notes.join).to include("wsparcie")
     end
@@ -129,46 +133,46 @@ RSpec.describe Jobs::MinosApplyVerdict do
 
   describe "nieocenione" do
     it "leaves the post under fail-closed, the default" do
-      receive("status" => "nieocenione")
+      apply_verdict({ "status" => "nieocenione" })
       expect(reviewable).to be_pending
       expect(entry["reason"]).to eq("unassessed")
     end
 
     it "publishes the post under fail-open" do
       SiteSetting.minos_failure_mode = "fail-open"
-      receive("status" => "nieocenione")
+      apply_verdict({ "status" => "nieocenione" })
       expect(reviewable).to be_approved
     end
   end
 
   it "leaves a post edited in the queue after it was sent" do
-    receive(assessed("bezpieczne"), text_digest: "0" * 64)
+    apply_verdict(assessed("bezpieczne"), { "text_digest" => "0" * 64 })
     expect(reviewable).to be_pending
     expect(entry["reason"]).to eq("edited")
   end
 
   it "only notes the verdict on a post Discourse holds itself" do
-    receive(assessed("bezpieczne"), core_hold: "post_count")
+    apply_verdict(assessed("bezpieczne"), { "core_hold" => "post_count" })
     expect(reviewable).to be_pending
     expect(entry["reason"]).to eq("core_hold")
   end
 
   it "leaves a post whose topic was closed meanwhile" do
     reviewable.topic.update!(closed: true)
-    receive(assessed("bezpieczne"))
+    apply_verdict(assessed("bezpieczne"))
     expect(reviewable).to be_pending
     expect(entry["reason"]).to eq("topic_closed")
   end
 
   it "does nothing to a post a moderator already handled" do
     reviewable.perform(Discourse.system_user, :reject_post)
-    receive(assessed("bezpieczne"))
+    apply_verdict(assessed("bezpieczne"))
     expect(reviewable).to be_rejected
     expect(entry["outcome"]).to eq("resolved_elsewhere")
   end
 
   it "applies a verdict once" do
-    receive(assessed("bezpieczne"))
+    apply_verdict(assessed("bezpieczne"))
     expect { described_class.new.execute(reviewable_id: reviewable.id) }.not_to change {
       reviewable.reload.reviewable_notes.count
     }
