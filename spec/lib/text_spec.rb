@@ -145,6 +145,47 @@ RSpec.describe "MinosModeration::Text" do
       expect(masked).to eq(raw.sub("kurwa", mask * 5))
     end
 
+    describe "a post: number as JavaScript reads and prints it" do
+      def title_of(attribute)
+        text.for_submission("[quote=\"#{attribute}\"]\ncytat\n[/quote]")[:text].delete_suffix(
+          "\n\ncytat",
+        )
+      end
+
+      it "misses a post: number above 2**53, which parseInt rounds, as Discourse does" do
+        # parseInt gives 9007199254740992 and 1e20: indexOf finds no segment, so Discourse
+        # shows every segment but the last.
+        %w[9007199254740993 99999999999999999999].each do |number|
+          attribute = "ok, post:#{number}, kurwa mać, username:x"
+          expect(title_of(attribute)).to eq("ok, post:#{number}, kurwa mać"), number
+        end
+      end
+
+      it "finds a post: number just under 2**53, which parseInt keeps exact" do
+        attribute = "ok, kurwa mać, post:9007199254740991, username:x"
+        expect(title_of(attribute)).to eq("ok, kurwa mać")
+      end
+
+      it "prints the double's shortest digits, as Number#toString does" do
+        # 2**60 prints as 1152921504606847000 in JavaScript, not as its exact value.
+        attribute = "ok, kurwa mać, post:1152921504606846976, username:x"
+        expect(title_of(attribute)).to eq("ok, kurwa mać, post:1152921504606846976")
+      end
+
+      it "prints a number from 1e21 in exponent notation, as JavaScript does" do
+        attribute = "a, b, post:1e+21, c, post:1000000000000000000000, username:x"
+        expect(title_of(attribute)).to eq("a, b")
+      end
+    end
+
+    it "sends a Unicode space in the title as the plain space Discourse shows" do
+      raw = "[quote=\"a, b, post:\u00A07, username:x\"]\ncytat\n[/quote]"
+      sent = text.for_submission(raw)[:text]
+      expect(sent).to eq("a, b, post: 7\n\ncytat")
+      masked = text.apply_masks(raw, sent, sent.sub("post: 7", mask * 7))[:raw]
+      expect(masked).to eq(raw.sub("post:\u00A07", mask * 7))
+    end
+
     it "joins the shown segments with a comma and a space, as Discourse shows them" do
       raw = "[quote=\"ok,głupi chuju, username:ktos\"]x[/quote]"
       sent = text.for_submission(raw)[:text]

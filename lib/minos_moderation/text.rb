@@ -86,7 +86,7 @@ module MinosModeration
           text = texts[index]
           if text.start_with?("post:")
             digits = text[5..][/\A[#{JS_SPACE}]*([+-]?\d+)/o, 1]
-            post_number = digits ? Integer(digits, 10).to_s : "NaN"
+            post_number = digits ? js_number_string(Float(digits)) : "NaN"
           elsif text.start_with?("topic:") || text.match?(/full:[#{JS_SPACE}]*true/o)
             next
           elsif text.start_with?("username:")
@@ -216,11 +216,11 @@ module MinosModeration
       if chars.empty?
         # Markup only (an image without alt text, say): the raw text is sent rather than
         # nothing, because an empty item would refuse the whole request.
-        chars = clean(raw).chars
+        chars = spaced(clean(raw))
         origins = (0...chars.length).to_a
         chars, origins = trim(chars, origins)
       end
-      heading = clean(title).chars
+      heading = spaced(clean(title))
       heading, heading_origins = trim(heading, (0...heading.length).map { |i| -1 - i })
       unless heading.empty?
         separator = chars.empty? ? [] : ["\n", "\n"]
@@ -237,8 +237,8 @@ module MinosModeration
     # @param raw [String, nil] the post's raw Markdown.
     # @return [Array(Array<String>, Array<Integer, nil>)] the characters and their origins.
     def self.reduce(raw)
-      text = clean(raw)
-      chars = text.chars
+      chars = spaced(clean(raw))
+      text = chars.join
       origins = (0...chars.length).to_a
       MARKUP.each do |pattern, parts|
         chars, origins = replace(text, chars, origins, pattern, parts)
@@ -308,12 +308,54 @@ module MinosModeration
       [chars[first..last], origins[first..last]]
     end
 
+    # The characters of a text as Discourse stores and shows it: `PostCreator#setup_post`
+    # (and the title's cleaning) turn every character of {DISCOURSE_SPACES} into a plain
+    # space. One character for one, so every character keeps its origin.
+    #
+    # @param text [String] a cleaned text.
+    # @return [Array<String>] its characters, those spaces made plain.
+    def self.spaced(text)
+      text.chars.map { |char| DISCOURSE_SPACES.match?(char) ? " " : char }
+    end
+
     # @param raw [String, nil] the post's raw Markdown.
     # @return [String] it as valid UTF-8.
     def self.clean(raw)
       raw.to_s.dup.force_encoding(Encoding::UTF_8).scrub("�")
     end
 
-    private_class_method :submission, :reduce, :replace, :trim, :clean
+    # A number as JavaScript prints it in `post:${postNumber}`: `parseInt` gives a double,
+    # and `Number#toString` writes its shortest round-trip digits — padded with zeros
+    # below 1e21 (so 2**60 prints as 1152921504606847000, not its exact value), in
+    # exponent notation from 1e21 (`1e+21`, `1.5e+22`).
+    #
+    # @param value [Float] the number `parseInt` read.
+    # @return [String] its JavaScript spelling.
+    def self.js_number_string(value)
+      return "NaN" if value.nan?
+      return value.positive? ? "Infinity" : "-Infinity" if value.infinite?
+      return "0" if value.zero?
+
+      sign = value.negative? ? "-" : ""
+      # Ruby's Float#to_s also writes the shortest round-trip digits.
+      text = value.abs.to_s
+      if (form = text.match(/\A(\d)\.(\d+)e([+-]\d+)\z/))
+        digits = "#{form[1]}#{form[2]}"
+        exponent = Integer(form[3], 10)
+      else
+        whole = text.delete_suffix(".0")
+        digits = whole
+        exponent = whole.length - 1
+      end
+      digits = digits.sub(/0+\z/, "")
+      digits = "0" if digits.empty?
+      return "#{sign}#{digits}#{"0" * (exponent + 1 - digits.length)}" if exponent < 21
+
+      mantissa = digits.length > 1 ? "#{digits[0]}.#{digits[1..]}" : digits
+      "#{sign}#{mantissa}e+#{exponent}"
+    end
+
+    private_class_method :submission, :reduce, :replace, :trim, :clean, :spaced,
+                         :js_number_string
   end
 end
