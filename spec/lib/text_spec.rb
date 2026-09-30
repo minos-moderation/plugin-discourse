@@ -106,6 +106,30 @@ RSpec.describe "MinosModeration::Text" do
       %w[post:3 topic:7 username jkowal].each { |part| expect(sent).not_to include(part) }
     end
 
+    it "keeps a display name with commas whole, as Discourse shows it in the quote's title" do
+      raw = "[quote=\"ok, głupi chuju, post:3, topic:4, username:ktos\"]\ncytat\n[/quote]"
+      sent = text.for_submission(raw)[:text]
+      expect(sent).to eq("ok, głupi chuju\n\ncytat")
+      %w[post:3 topic:4 username ktos].each { |part| expect(sent).not_to include(part) }
+    end
+
+    it "keeps all but the last segment when a display name has no post: segment" do
+      raw = "[quote=\"ok, głupi chuju, username:ktos\"]\ncytat\n[/quote]"
+      expect(text.for_submission(raw)[:text]).to eq("ok, głupi chuju\n\ncytat")
+    end
+
+    it "keeps only the first segment without username:, as Discourse shows only that" do
+      raw = "[quote=\"ktos, post:3, topic:4\"]\ncytat\n[/quote]"
+      expect(text.for_submission(raw)[:text]).to eq("ktos\n\ncytat")
+    end
+
+    it "carries a mask anywhere in a quote's title back into its attribute" do
+      raw = "[quote=\"ok, głupi chuju, post:3, topic:4, username:ktos\"]\ncytat\n[/quote]"
+      sent = text.for_submission(raw)[:text]
+      result = text.apply_masks(raw, sent, sent.sub("chuju", mask * 5))[:raw]
+      expect(result).to eq(raw.sub("chuju", mask * 5))
+    end
+
     it "keeps the name of a quote without quotation marks, apart from the quoted text" do
       expect(text.for_submission("[quote=ala, post:1]tekst[/quote]")[:text]).to eq("ala\ntekst")
     end

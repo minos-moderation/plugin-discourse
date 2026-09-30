@@ -35,11 +35,49 @@ module MinosModeration
     # BBCode tags whose markers go (the text between them stays).
     BBCODE = "quote|details|spoiler|b|i|u|s|code|url|img|color|size|center|left|right"
 
+    # The span of a quote's attribute that Discourse shows as the quote's title, as its
+    # markdown-it quote rule computes it (`frontend/discourse-markdown-it/src/features/
+    # quotes.js`): the attribute splits on `,\s*`; with a `username:` segment the title is
+    # every segment before `post:<n>` (all but the last when there is no such segment),
+    # otherwise the first segment. A display name may itself contain commas.
+    #
+    # @return [Array(Integer, Integer), nil] the span's first and past-the-end character
+    #   offsets in the matched text.
+    QUOTE_TITLE =
+      lambda do |match|
+        group = match[1] ? 1 : 2
+        attribute = match[group].to_s
+        segments = []
+        position = 0
+        attribute.scan(/,\s*/) do
+          separator = Regexp.last_match
+          segments << [attribute[position...separator.begin(0)], position, separator.begin(0)]
+          position = separator.end(0)
+        end
+        segments << [attribute[position..].to_s, position, attribute.length]
+
+        texts = segments.map(&:first)
+        shown = 1
+        post_number = "undefined"
+        texts.each_with_index do |text, index|
+          next if index.zero?
+
+          if text.start_with?("post:")
+            post_number = text[5..][/\A\s*([+-]?\d+)/, 1]&.to_i || "NaN"
+          elsif text.start_with?("username:")
+            shown = texts.index("post:#{post_number}") || (texts.length - 1)
+          end
+        end
+        shown = shown.clamp(1, texts.length)
+        base = match.begin(group)
+        [base + segments[0][1], base + segments[shown - 1][2]]
+      end
+
     # The reduction from Markdown to plain text, step by step. Each step replaces a match
     # with its parts: an Integer is a capture group (kept, with its origin), a String is
     # made-up text (with no origin, so a mask on it cannot be carried back), and a Hash
-    # `{group:, before:, after:}` is a group kept with made-up text around it, only when
-    # the group matched something.
+    # `{group: or span:, before:, after:}` is a group, or the span a lambda picks, kept with
+    # made-up text around it, only when it is not empty.
     MARKUP = [
       [/\r(?=\n)/, []], # CRLF → LF
       [/\r/, ["\n"]], # a lone CR → LF
@@ -51,9 +89,9 @@ module MinosModeration
       [/\[([^\]\n]+)\]\(([^)\s]+)\)/, [1, " ", 2]], # link → its text and its URL
       [/\[details=(?:"([^"\]\n]*)"|([^\]\n]*))\]/i, [1, 2]], # details → its summary
       [
-        /\[quote=(?:"([^",\]\n]*)[^"\]\n]*"|([^,\]\n]*)[^\]\n]*)\]/i,
-        [{ group: 1, after: "\n" }, { group: 2, after: "\n" }],
-      ], # quote → the name shown as its title (not `post:`, `topic:` or `username:`)
+        /\[quote=(?:"([^"\]\n]*)"|([^\]\n]*))\]/i,
+        [{ span: QUOTE_TITLE, after: "\n" }],
+      ], # quote → the title Discourse shows (not `post:`, `topic:` or `username:`)
       [%r{\[/?(?:#{BBCODE})(?:=[^\]\n]*)?\]}io, []], # other BBCode tags
       [/<!--|-->/, []], # comment markers (the commented text stays)
       [/^[ \t]{0,3}\#{1,6}[ \t]+/, []], # ATX heading markers
@@ -200,18 +238,19 @@ module MinosModeration
             out_chars.concat(chars[match.begin(part)...match.end(part)])
             out_origins.concat(origins[match.begin(part)...match.end(part)])
           elsif part.is_a?(Hash)
-            group = part[:group]
-            next if match[group].nil? || match[group].empty?
+            from, to =
+              if part[:span]
+                part[:span].call(match)
+              elsif match[part[:group]]
+                [match.begin(part[:group]), match.end(part[:group])]
+              end
+            next if from.nil? || to <= from
 
             made_up = ->(text) { [text.to_s.chars, [nil] * text.to_s.length] }
             before, before_origins = made_up.call(part[:before])
             after, after_origins = made_up.call(part[:after])
-            out_chars.concat(before, chars[match.begin(group)...match.end(group)], after)
-            out_origins.concat(
-              before_origins,
-              origins[match.begin(group)...match.end(group)],
-              after_origins,
-            )
+            out_chars.concat(before, chars[from...to], after)
+            out_origins.concat(before_origins, origins[from...to], after_origins)
           else
             out_chars.concat(part.chars)
             out_origins.concat([nil] * part.length)
