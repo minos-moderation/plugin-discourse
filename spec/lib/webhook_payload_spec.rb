@@ -15,7 +15,8 @@ RSpec.describe "MinosModeration::WebhookPayload" do
   end
 
   it "reads the vector's body as its verdict" do
-    vector = JSON.parse(File.read(File.expand_path("../fixtures/signature.json", __dir__)))
+    path = File.expand_path("../fixtures/signature.json", __dir__)
+    vector = JSON.parse(File.read(path, encoding: "UTF-8"))
     expect(payload.parse(vector.fetch("body"))).to eq(
       "id" => "k-1",
       "status" => "ocenione",
@@ -72,7 +73,8 @@ RSpec.describe "MinosModeration::WebhookPayload" do
   end
 
   it "reads the labels of a category object, as the PHP reader does" do
-    read = payload.parse(assessed("kwalifikacja" => "zablokowane", "kategorie" => { "a" => "spam" }))
+    body = assessed("kwalifikacja" => "zablokowane", "kategorie" => { "a" => "spam" })
+    read = payload.parse(body)
     expect(read["kategorie"]).to eq(["spam"])
   end
 

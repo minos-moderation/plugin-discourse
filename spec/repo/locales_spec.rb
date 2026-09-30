@@ -29,7 +29,8 @@ RSpec.describe "The plugin's locale files" do
   end
 
   it "describes every site setting" do
-    settings = YAML.safe_load(File.read(File.join(root, "config/settings.yml"))).fetch("plugins")
+    path = File.join(root, "config/settings.yml")
+    settings = YAML.safe_load(File.read(path, encoding: "UTF-8")).fetch("plugins")
     expect(settings).not_to be_empty
     descriptions = tree("server", "pl_PL").fetch("site_settings")
     settings.each_key do |name|

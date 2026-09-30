@@ -8,7 +8,8 @@ require_relative "../../lib/minos_moderation/signature" unless defined?(MinosMod
 RSpec.describe "MinosModeration::Signature" do
   subject(:signature) { MinosModeration::Signature }
 
-  let(:vector) { JSON.parse(File.read(File.expand_path("../fixtures/signature.json", __dir__))) }
+  let(:vector_path) { File.expand_path("../fixtures/signature.json", __dir__) }
+  let(:vector) { JSON.parse(File.read(vector_path, encoding: "UTF-8")) }
   let(:secret) { vector.fetch("secret") }
   let(:header) { vector.fetch("header") }
   let(:body) { vector.fetch("body") }
