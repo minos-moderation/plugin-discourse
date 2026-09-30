@@ -1,0 +1,63 @@
+# Polish, for administrators and moderators: the product speaks Polish only. The pl_PL
+# and en files carry the SAME Polish text on purpose: Discourse falls back to en, so a
+# forum in any other language would otherwise show raw keys (docs/development.md).
+pl_PL:
+  site_settings:
+    minos_enabled: "Włącza moderację nowych postów przez Minos. Nowy post czeka w kolejce do przeglądu, dopóki brama Wergiliusz nie przyśle werdyktu. Adres webhooka, który podajesz operatorowi bramy: https://ADRES-TWOJEGO-FORUM%{base_path}/minos/webhook"
+    minos_gateway_url: "Adres bramy Wergiliusz. Wymagany https; zwykłe http działa tylko z bramą testową na tym samym komputerze (localhost)."
+    minos_api_key: "Klucz API forum (nagłówek X-Gateway-Key, zaczyna się od wgb2b_), wydany przez operatora bramy. Wtyczka nie zapisuje go w logach ani nie pokazuje na stronach."
+    minos_webhook_secret: "Sekret webhooka, wydrukowany raz przy wydaniu klucza. Służy do sprawdzania podpisu każdej dostawy na adres https://ADRES-TWOJEGO-FORUM%{base_path}/minos/webhook — bez niego żaden werdykt nie zostanie przyjęty."
+    minos_profile: "Profil oceny: forum_adult (forum dla dorosłych) albo forum_teen (forum dla nastolatków). Profil musi być na liście profili klucza."
+    minos_failure_mode: "Co zrobić z postem, którego brama nie oceniła (odpowiedź nieocenione, brak werdyktu w wyznaczonym czasie, błąd konfiguracji): fail-open — opublikować bez oceny; fail-closed — zostawić moderatorom w kolejce do przeglądu."
+    minos_timeout_minutes: "Po ilu minutach bez werdyktu post jest traktowany jak nieoceniony (według ustawienia minos_failure_mode). Brama próbuje doręczyć werdykt przez 15 minut, więc wartość musi być większa."
+    minos_censored_action: "Werdykt „ocenzurowane”: publikuj_ocenzurowany — opublikować post z zamaskowanymi fragmentami (█); zostaw_moderatorom — zostawić go w kolejce do przeglądu."
+    minos_blocked_action: "Werdykt „zablokowane”: zostaw_moderatorom — zostawić post w kolejce do przeglądu; odrzuc — odrzucić go."
+    minos_skip_staff: "Posty moderatorów i administratorów publikuj od razu, bez wysyłania do oceny."
+  reviewables:
+    reasons:
+      minos_pending: "Czeka na ocenę Minos — moderacja postów."
+  dashboard:
+    problem:
+      minos_gateway_problem: "Minos — moderacja postów: %{szczegoly}. Do czasu naprawy posty są traktowane zgodnie z ustawieniem minos_failure_mode. <a href='%{base_path}/admin/site_settings/category/plugins?filter=minos'>Ustawienia wtyczki</a>"
+  minos_moderation:
+    edit_reason: "Minos: zamaskowano fragmenty"
+    notes:
+      verdict: "Minos: werdykt „%{werdykt}”, kategorie: %{kategorie}."
+      no_categories: "brak"
+      no_verdict: "Minos: brak werdyktu."
+      reason: "Powód: %{powod}."
+      support: "Minos: treść może świadczyć o tym, że autor jest w kryzysie (samookaleczenie). To sygnał, by okazać mu wsparcie, a nie by go karać."
+    actions:
+      approve: "Post opublikowano."
+      approve_unassessed: "Post opublikowano bez pełnej oceny, zgodnie z ustawieniem fail-open."
+      approve_masked: "Post opublikowano z zamaskowanymi fragmentami; oryginalna treść jest w historii tego zgłoszenia."
+      approve_masked_unassessed: "Post opublikowano z zamaskowanymi fragmentami, bez pełnej oceny, zgodnie z ustawieniem fail-open; oryginalna treść jest w historii tego zgłoszenia."
+      reject: "Post odrzucono."
+      leave: "Post czeka na decyzję moderatora."
+      keep: "Opublikowany wcześniej post zostaje bez zmian."
+      mask: "W opublikowanym wcześniej poście zamaskowano fragmenty; oryginalna treść jest w historii edycji posta."
+      hide: "Opublikowany wcześniej post ukryto; moderator może go przywrócić."
+    reasons:
+      core_hold: "forum samo wymaga zatwierdzenia tego posta, więc werdykt jest tylko podpowiedzią"
+      edited: "post zmieniono w kolejce po wysłaniu go do oceny"
+      unassessed: "brama nie oceniła posta (nieocenione)"
+      timeout: "brama nie przysłała werdyktu w wyznaczonym czasie"
+      config: "błąd konfiguracji wtyczki; szczegóły są na pulpicie administratora"
+      no_text: "post nie zawiera tekstu do oceny"
+      truncated: "oceniono tylko pierwsze 3000 znaków posta"
+      censored_setting: "ustawienie minos_censored_action każe zostawiać takie posty moderatorom"
+      no_masked_text: "brama nie przysłała zamaskowanej wersji posta"
+      mask_unmappable: "maskowania nie dało się bezpiecznie nanieść na treść posta"
+      blocked_setting: "ustawienie minos_blocked_action każe zostawiać takie posty moderatorom"
+      support: "treść może świadczyć o kryzysie autora, więc o odrzuceniu decyduje człowiek"
+      topic_closed: "temat zamknięto, zanim przyszedł werdykt"
+      action_failed: "nie udało się wykonać tej akcji automatycznie"
+      apply_stuck: "werdyktu nie udało się zastosować przez dobę"
+      person_acted: "ktoś zajął się już tym postem, więc jego decyzja zostaje"
+    problems:
+      invalid_url: "adres bramy (minos_gateway_url) jest nieprawidłowy albo nie używa https"
+      missing_key: "brak klucza API (minos_api_key)"
+      missing_secret: "brak sekretu webhooka (minos_webhook_secret), więc żaden werdykt nie może zostać przyjęty"
+      disallowed_address: "adres bramy wskazuje na sieć prywatną, a Discourse nie łączy się z takimi adresami"
+      refused: "brama odrzuciła wysyłkę posta (HTTP %{http}, kod %{kod})"
+      unexpected: "brama odpowiedziała w nieoczekiwany sposób (HTTP %{http})"

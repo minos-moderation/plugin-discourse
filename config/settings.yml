@@ -1,0 +1,46 @@
+# The plugin's site settings. Their descriptions (Polish, for administrators) are in
+# config/locales/server.*.yml under `site_settings`. Choice values are shown to the
+# administrator as they are (plain `choices` are not translated), so they are Polish
+# words; `fail-open`/`fail-closed` and the profile names are the contract's own terms.
+plugins:
+  minos_enabled:
+    default: false
+    client: false
+  minos_gateway_url:
+    default: "https://gateway.wergiliusz.app"
+  minos_api_key:
+    default: ""
+    secret: true
+  minos_webhook_secret:
+    default: ""
+    secret: true
+  minos_profile:
+    type: enum
+    default: forum_adult
+    choices:
+      - forum_adult
+      - forum_teen
+  minos_failure_mode:
+    type: enum
+    default: fail-closed
+    choices:
+      - fail-open
+      - fail-closed
+  minos_timeout_minutes:
+    default: 20
+    min: 16
+    max: 1440
+  minos_censored_action:
+    type: enum
+    default: publikuj_ocenzurowany
+    choices:
+      - publikuj_ocenzurowany
+      - zostaw_moderatorom
+  minos_blocked_action:
+    type: enum
+    default: zostaw_moderatorom
+    choices:
+      - zostaw_moderatorom
+      - odrzuc
+  minos_skip_staff:
+    default: true
