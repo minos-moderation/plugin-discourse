@@ -1,0 +1,7 @@
+{
+  "source": "the gateway's B2B contract, section \"The signature\" (test vector)",
+  "secret": "5f2d3c8a9b1e4f607d8c2a1b3e4f5a6b7c8d9e0f1a2b3c4d",
+  "timestamp": 1727430000,
+  "body": "{\"id\":\"k-1\",\"status\":\"ocenione\",\"kwalifikacja\":\"ocenzurowane\",\"kategorie\":[\"wulgaryzmy\"],\"ocenzurowany\":\"no to jest ███████ pomysł\",\"wsparcie\":false,\"wersja\":\"3f0c9a41d2b7e8c5\"}",
+  "header": "t=1727430000,v1=299d2efa59614cfd71860eac52c66357d750ef428c13409c82b251d8c786b797"
+}
