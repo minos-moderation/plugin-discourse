@@ -35,49 +35,76 @@ module MinosModeration
     # BBCode tags whose markers go (the text between them stays).
     BBCODE = "quote|details|spoiler|b|i|u|s|code|url|img|color|size|center|left|right"
 
-    # The span of a quote's attribute that Discourse shows as the quote's title, as its
-    # markdown-it quote rule computes it (`frontend/discourse-markdown-it/src/features/
-    # quotes.js`): the attribute splits on `,\s*`; with a `username:` segment the title is
-    # every segment before `post:<n>` (all but the last when there is no such segment),
-    # otherwise the first segment. A display name may itself contain commas.
+    # The spaces `TextCleaner.normalize_whitespaces` turns into a plain space when
+    # `PostCreator#setup_post` saves a post: Discourse renders the normalised text.
+    DISCOURSE_SPACES = /[\u00A0\u1680\u180E\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/
+
+    # JavaScript's `\s` (and `parseInt`'s leading whitespace), which Ruby's ASCII `\s` is
+    # not: the Unicode space separators, the line terminators and U+FEFF.
+    JS_SPACE = "\\s\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF"
+
+    # The separator of a quote's attribute, as `quotes.js` splits it: `/\,\s*/`.
+    QUOTE_SEPARATOR = /,[#{JS_SPACE}]*/o
+
+    # What Discourse shows as a quote's title, computed from the quote's attribute exactly
+    # as its markdown-it quote rule does (`frontend/discourse-markdown-it/src/features/
+    # quotes.js`), on the attribute as Discourse renders it (after the whitespace
+    # normalisation above; each replaced character stays one character, so offsets hold):
     #
-    # @return [Array(Integer, Integer), nil] the span's first and past-the-end character
-    #   offsets in the matched text.
+    # - split on `,\s*`; the username is the first segment;
+    # - for every later segment: `post:` sets the post number (`parseInt`), `topic:` and
+    #   `full:true` are skipped, and `username:` sets the display name to the segments
+    #   before the first one equal to `post:<number>` (`indexOf`; all but the last when
+    #   there is none, as `slice(0, -1)` does) joined with ", ", and the username to the
+    #   rest of that segment;
+    # - the title is the display name, or the username when the display name is empty.
+    #
+    # @return [Array<Array(Integer, Integer)>] the title's pieces as character offsets in
+    #   the matched text, to be joined with ", "; empty when the title is empty.
     QUOTE_TITLE =
       lambda do |match|
         group = match[1] ? 1 : 2
-        attribute = match[group].to_s
+        base = match.begin(group)
+        attribute = match[group].to_s.gsub(DISCOURSE_SPACES, " ")
         segments = []
         position = 0
-        attribute.scan(/,\s*/) do
+        attribute.scan(QUOTE_SEPARATOR) do
           separator = Regexp.last_match
           segments << [attribute[position...separator.begin(0)], position, separator.begin(0)]
           position = separator.end(0)
         end
         segments << [attribute[position..].to_s, position, attribute.length]
-
         texts = segments.map(&:first)
-        shown = 1
-        post_number = "undefined"
-        texts.each_with_index do |text, index|
-          next if index.zero?
+        piece = lambda do |index, skip = 0|
+          [base + segments[index][1] + skip, base + segments[index][2]]
+        end
 
+        username = [piece.call(0)]
+        display = nil
+        post_number = "undefined"
+        (1...texts.length).each do |index|
+          text = texts[index]
           if text.start_with?("post:")
-            post_number = text[5..][/\A\s*([+-]?\d+)/, 1]&.to_i || "NaN"
+            digits = text[5..][/\A[#{JS_SPACE}]*([+-]?\d+)/o, 1]
+            post_number = digits ? Integer(digits, 10).to_s : "NaN"
+          elsif text.start_with?("topic:") || text.match?(/full:[#{JS_SPACE}]*true/o)
+            next
           elsif text.start_with?("username:")
-            shown = texts.index("post:#{post_number}") || (texts.length - 1)
+            found = texts.index("post:#{post_number}")
+            display = (0...(found || (texts.length - 1))).map { |shown| piece.call(shown) }
+            username = [piece.call(index, 9)]
           end
         end
-        shown = shown.clamp(1, texts.length)
-        base = match.begin(group)
-        [base + segments[0][1], base + segments[shown - 1][2]]
+        # `displayName || username`: an empty display name ("" in JavaScript) falls back.
+        title = display && !texts[0...display.length].join(", ").empty? ? display : username
+        title.all? { |from, to| to <= from } ? [] : title
       end
 
     # The reduction from Markdown to plain text, step by step. Each step replaces a match
     # with its parts: an Integer is a capture group (kept, with its origin), a String is
     # made-up text (with no origin, so a mask on it cannot be carried back), and a Hash
-    # `{group: or span:, before:, after:}` is a group, or the span a lambda picks, kept with
-    # made-up text around it, only when it is not empty.
+    # `{group: or span:, join:, before:, after:}` is a group, or the pieces a lambda picks
+    # (joined with `join:`), kept with made-up text around them, only when not empty.
     MARKUP = [
       [/\r(?=\n)/, []], # CRLF → LF
       [/\r/, ["\n"]], # a lone CR → LF
@@ -90,7 +117,7 @@ module MinosModeration
       [/\[details=(?:"([^"\]\n]*)"|([^\]\n]*))\]/i, [1, 2]], # details → its summary
       [
         /\[quote=(?:"([^"\]\n]*)"|([^\]\n]*))\]/i,
-        [{ span: QUOTE_TITLE, after: "\n" }],
+        [{ span: QUOTE_TITLE, join: ", ", after: "\n" }],
       ], # quote → the title Discourse shows (not `post:`, `topic:` or `username:`)
       [%r{\[/?(?:#{BBCODE})(?:=[^\]\n]*)?\]}io, []], # other BBCode tags
       [/<!--|-->/, []], # comment markers (the commented text stays)
@@ -238,19 +265,28 @@ module MinosModeration
             out_chars.concat(chars[match.begin(part)...match.end(part)])
             out_origins.concat(origins[match.begin(part)...match.end(part)])
           elsif part.is_a?(Hash)
-            from, to =
+            pieces =
               if part[:span]
                 part[:span].call(match)
               elsif match[part[:group]]
-                [match.begin(part[:group]), match.end(part[:group])]
+                [[match.begin(part[:group]), match.end(part[:group])]]
               end
-            next if from.nil? || to <= from
+            next if pieces.nil? || pieces.all? { |from, to| to <= from }
 
             made_up = ->(text) { [text.to_s.chars, [nil] * text.to_s.length] }
             before, before_origins = made_up.call(part[:before])
+            joiner, joiner_origins = made_up.call(part[:join])
             after, after_origins = made_up.call(part[:after])
-            out_chars.concat(before, chars[from...to], after)
-            out_origins.concat(before_origins, origins[from...to], after_origins)
+            out_chars.concat(before)
+            out_origins.concat(before_origins)
+            pieces.each_with_index do |(from, to), index|
+              out_chars.concat(joiner) unless index.zero?
+              out_origins.concat(joiner_origins) unless index.zero?
+              out_chars.concat(chars[from...to])
+              out_origins.concat(origins[from...to])
+            end
+            out_chars.concat(after)
+            out_origins.concat(after_origins)
           else
             out_chars.concat(part.chars)
             out_origins.concat([nil] * part.length)

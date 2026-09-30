@@ -123,6 +123,36 @@ RSpec.describe "MinosModeration::Text" do
       expect(text.for_submission(raw)[:text]).to eq("ktos\n\ncytat")
     end
 
+    it "sees the username: segment behind any Unicode space Discourse or JavaScript sees" do
+      { "NBSP" => "\u00A0", "U+2003" => "\u2003", "U+FEFF" => "\uFEFF" }.each do |name, space|
+        raw = "[quote=\"ok, głupi chuju,#{space}username:ktos\"]\ncytat\n[/quote]"
+        expect(text.for_submission(raw)[:text]).to eq("ok, głupi chuju\n\ncytat"), name
+      end
+    end
+
+    it "sees a post: segment behind an ideographic space (U+3000)" do
+      raw = "[quote=\"ok, głupi chuju,\u3000post:3, topic:4, username:ktos\"]\ncytat\n[/quote]"
+      expect(text.for_submission(raw)[:text]).to eq("ok, głupi chuju\n\ncytat")
+    end
+
+    it "falls back to the username when the display name is empty, as Discourse does" do
+      # indexOf("post:3") finds the first segment, so the display name is empty and the
+      # title is the value of username:.
+      raw = "[quote=\"post:3, post:3, username:kurwa mać\"]\ncytat\n[/quote]"
+      sent = text.for_submission(raw)[:text]
+      expect(sent).to eq("kurwa mać\n\ncytat")
+      masked = text.apply_masks(raw, sent, sent.sub("kurwa", mask * 5))[:raw]
+      expect(masked).to eq(raw.sub("kurwa", mask * 5))
+    end
+
+    it "joins the shown segments with a comma and a space, as Discourse shows them" do
+      raw = "[quote=\"ok,głupi chuju, username:ktos\"]x[/quote]"
+      sent = text.for_submission(raw)[:text]
+      expect(sent).to eq("ok, głupi chuju\nx")
+      # The joining ", " is made up: a mask on it cannot be carried back.
+      expect(text.apply_masks(raw, sent, sent.sub(", ", mask * 2))).to be_nil
+    end
+
     it "carries a mask anywhere in a quote's title back into its attribute" do
       raw = "[quote=\"ok, głupi chuju, post:3, topic:4, username:ktos\"]\ncytat\n[/quote]"
       sent = text.for_submission(raw)[:text]
