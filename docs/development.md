@@ -20,6 +20,7 @@ plugin. The gateway's contract, from the client's side, is `docs/contract.md` in
 | `spec/lib/`, `spec/repo/` | The standalone tier (plain rspec) |
 | `spec/requests/`, `spec/jobs/`, `spec/integration/` | The Discourse tier (plugin harness) |
 | `spec/fixtures/signature.json` | The gateway's signature vector, a byte-for-byte copy of client-php's `vectors/signature.json` |
+| `.github/workflows/release.yml` | On a `v*` tag: checks `plugin.rb`'s version against the tag (`.github/scripts/check-release-version.sh`) and creates the GitHub Release |
 
 The standalone files (`signature.rb`, `webhook_payload.rb`, `scores.rb`, `text.rb`,
 `decision.rb`, `gateway_client.rb`) use plain Ruby and its standard library, so every
@@ -163,6 +164,41 @@ with it every censored post was left to the moderators (`mask_unmappable`).
   `fail-closed` and the profile names are the contract's own terms. The values are
   stored, so they are never renamed.
 - The client files hold only the product name: the plugin has no client-side UI.
+
+## Releasing
+
+Discourse installs a plugin from its git URL (a `git clone` in the forum's `app.yml`), not
+from an archive, so there is no build script and a release carries no asset: the tagged
+tree is the release. The version lives in ONE place the release workflow checks: the
+`# version:` line of `plugin.rb`'s header (the last one, as Discourse reads it). The
+repository keeps no changelog; the release notes are GitHub's generated ones. The
+workflow, not a person, creates the release, and only after its check passes.
+
+1. Bump `# version:` in `plugin.rb` in a pull request, and merge it. On every pull request
+   the `release-version` job of `tests.yml` already runs the release check against it.
+2. The dry run on `main`: Actions → Release → "Run workflow", branch `main`, the tag to
+   be (`v0.2.0`); see it green.
+3. The owner creates and pushes the TAG ONLY, on the commit the dry run checked, from a
+   local clone: `git tag -a v0.2.0 -m v0.2.0 <commit>` and `git push origin v0.2.0`. Not
+   GitHub's "Draft a new release" form: a tag created there is published together with
+   its release, before any check. Tag pushes from Claude Code sessions are refused.
+4. The tag's push starts `.github/workflows/release.yml`. Its `check` job fails unless
+   `plugin.rb`'s `# version:` (read as Discourse's `Plugin::Metadata.parse` reads it: the
+   header's comment lines, the last `# version:` winning) equals the tag without the `v`,
+   naming both, and `LICENSE` is in the tree and not blank. Only then the `publish` job
+   creates the release (`--verify-tag`, generated notes, a pre-release for a tag with `-`).
+
+When a release for the tag already exists at that point, `publish` fails: such a release
+was published unchecked. Delete it (keep the tag) and re-run the failed jobs. A failed
+check publishes nothing: delete the tag, fix `main`, start again from step 1. By hand:
+`.github/scripts/check-release-version.sh v0.1.0` from the repository's root.
+
+The repository is private today: a forum cannot `git clone` it without credentials until
+it is made public.
+
+Nothing in this repository enforces that only the owner tags (the session refusal lives
+outside GitHub): the owner should add a tag ruleset on `v*` that only they may bypass, or
+a `release` environment with a required reviewer on the `publish` job.
 
 ## Discourse APIs
 

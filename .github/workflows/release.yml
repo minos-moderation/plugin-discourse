@@ -1,0 +1,66 @@
+name: Release
+
+# Discourse installs a plugin from its git URL, not from an archive, so a release carries no
+# asset. A tag push (v*) checks that plugin.rb's `# version:` equals the tag and that the
+# licence is in the tree (.github/scripts/check-release-version.sh), then creates the tag's
+# GitHub Release with generated notes; a release that already exists fails the run.
+# workflow_dispatch is the dry run: the same check on the chosen branch against the given
+# tag, nothing published.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'The tag to check the plugin version against, e.g. v0.1.0 (dry run: nothing is published)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# One run per tag (or per dry-run ref) at a time; a second one waits instead of racing.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check the version against the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        with:
+          persist-credentials: false
+      - name: plugin.rb's version equals the tag
+        run: bash .github/scripts/check-release-version.sh "$TAG"
+
+  publish:
+    name: Create the GitHub Release
+    if: github.event_name == 'push'
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # The release is created HERE, after the check, never before: one that already
+          # exists was published unchecked, so the job fails.
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::The release $TAG already exists. This workflow creates the release itself, after the checks; create only the tag (docs/development.md, Releasing), delete that release (keep the tag) and re-run this job."
+            exit 1
+          fi
+          prerelease=()
+          if [[ "$TAG" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes "${prerelease[@]}"
