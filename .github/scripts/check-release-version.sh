@@ -25,12 +25,16 @@ if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$ ]]; then
 fi
 expected="${tag#v}"
 
+# The licence must be there AND say something: an empty or blank file is no licence.
 if [ ! -f LICENSE ]; then
   fail "the licence LICENSE is not in the tree"
+elif [ "$(tr -d '[:space:]' < LICENSE | wc -c)" -eq 0 ]; then
+  fail "the licence LICENSE is empty"
 fi
 
-# The version as Discourse's Plugin::Metadata reads it: the header's comment lines, up to
-# the first line that is neither blank nor a comment; "# version: <value>".
+# The version as Discourse's Plugin::Metadata.parse reads it: every line of the header up
+# to the first one that is neither blank nor a comment; "# <name>: <value>" sets <name>,
+# so the LAST "# version:" line wins, and one without a colon sets an empty version.
 version=''
 if [ -f plugin.rb ]; then
   version="$(awk '
@@ -39,16 +43,19 @@ if [ -f plugin.rb ]; then
     {
       line = $0
       sub(/^[[:space:]]*#/, "", line)
-      split(line, parts, ":")
-      name = parts[1]
+      name = line
+      sub(/:.*/, "", name)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
-      if (name == "version") {
-        sub(/^[^:]*:/, "", line)
-        gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-        print line
-        exit
+      if (name != "version") { next }
+      value = ""
+      if (index(line, ":") > 0) {
+        value = line
+        sub(/^[^:]*:/, "", value)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
       }
-    }' plugin.rb)"
+      found = value
+    }
+    END { print found }' plugin.rb)"
 fi
 if [ -z "$version" ]; then
   fail "no '# version:' in the header of plugin.rb (the tag is $tag)"
