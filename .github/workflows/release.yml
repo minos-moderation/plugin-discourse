@@ -3,7 +3,7 @@ name: Release
 # Discourse installs a plugin from its git URL, not from an archive, so a release carries no
 # asset. A tag push (v*) checks that plugin.rb's `# version:` equals the tag and that the
 # licence is in the tree (.github/scripts/check-release-version.sh), then creates the tag's
-# GitHub Release with generated notes, unless the owner already published it.
+# GitHub Release with generated notes; a release that already exists fails the run.
 # workflow_dispatch is the dry run: the same check on the chosen branch against the given
 # tag, nothing published.
 on:
@@ -18,6 +18,11 @@ on:
 
 permissions:
   contents: read
+
+# One run per tag (or per dry-run ref) at a time; a second one waits instead of racing.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   check:
@@ -42,16 +47,17 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Create the release unless it exists
+      - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          # A release the owner created with the tag already exists: nothing to attach.
+          # The release is created HERE, after the check, never before: one that already
+          # exists was published unchecked, so the job fails.
           if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "The release $TAG exists; Discourse installs from git, so there is no asset."
-            exit 0
+            echo "::error::The release $TAG already exists. This workflow creates the release itself, after the checks; create only the tag (docs/development.md, Releasing), delete that release (keep the tag) and re-run this job."
+            exit 1
           fi
           prerelease=()
           if [[ "$TAG" == *-* ]]; then
