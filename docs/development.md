@@ -20,6 +20,7 @@ plugin. The gateway's contract, from the client's side, is `docs/contract.md` in
 | `spec/lib/`, `spec/repo/` | The standalone tier (plain rspec) |
 | `spec/requests/`, `spec/jobs/`, `spec/integration/` | The Discourse tier (plugin harness) |
 | `spec/fixtures/signature.json` | The gateway's signature vector, a byte-for-byte copy of client-php's `vectors/signature.json` |
+| `.github/workflows/release.yml` | On a `v*` tag: checks `plugin.rb`'s version against the tag (`.github/scripts/check-release-version.sh`) and creates the GitHub Release |
 
 The standalone files (`signature.rb`, `webhook_payload.rb`, `scores.rb`, `text.rb`,
 `decision.rb`, `gateway_client.rb`) use plain Ruby and its standard library, so every
@@ -163,6 +164,28 @@ with it every censored post was left to the moderators (`mask_unmappable`).
   `fail-closed` and the profile names are the contract's own terms. The values are
   stored, so they are never renamed.
 - The client files hold only the product name: the plugin has no client-side UI.
+
+## Releasing
+
+Discourse installs a plugin from its git URL (a `git clone` in the forum's `app.yml`), not
+from an archive, so there is no build script and a release carries no asset: the tagged
+tree is the release. The version lives in ONE place the release workflow checks: the
+`# version:` line of `plugin.rb`'s header. The repository keeps no changelog; the release
+notes are GitHub's generated ones.
+
+1. Bump `# version:` in `plugin.rb` in a pull request, and merge it.
+2. The owner creates the tag `v<version>` (for `# version: 0.2.0`, `v0.2.0`) through GitHub
+   Releases: "Draft a new release", a new tag on `main`, publish. Tag pushes from Claude
+   Code sessions are refused, so a session never tags.
+3. The tag's push starts `.github/workflows/release.yml`. Its `check` job fails unless
+   `plugin.rb`'s `# version:` (read as Discourse's plugin metadata reads it: the header's
+   comment lines) equals the tag without the `v`, naming both, and `LICENSE` is in the
+   tree. Then the `publish` job creates the tag's release (`--verify-tag`, generated notes,
+   a pre-release for a tag with `-`), or leaves alone the one the owner already published.
+
+A dry run before tagging: Actions → Release → "Run workflow" on a branch, with the tag to
+check the version against; it runs the check only. By hand:
+`.github/scripts/check-release-version.sh v0.1.0` from the repository's root.
 
 ## Discourse APIs
 
