@@ -3,7 +3,7 @@
 # name: minos-moderation
 # about: Minos — moderacja postów: nowe posty czekają na werdykt bramy Wergiliusz, który wraca podpisanym webhookiem.
 # version: 0.1.0
-# authors: Minos
+# authors: INPERITIA
 # url: https://github.com/minos-moderation/plugin-discourse
 
 enabled_site_setting :minos_enabled
