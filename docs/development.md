@@ -118,10 +118,10 @@ Its linting job is skipped: the Gemfile carries rspec alone (no `rubocop-discour
 
 ## The mock gateway with a development Discourse
 
-The B2B route of the real gateway is not open yet. The mock in client-php answers like
-it and delivers signed verdicts; you choose each verdict with markers such as
-`[minos:blokuj]` (its README has the list). Never send real users' posts to it: it keeps
-its queue as plain JSON on disk.
+The real gateway's batch route is open in production, but development and tests never
+use it. The mock in client-php answers like it and delivers signed verdicts; you choose
+each verdict with markers such as `[minos:blokuj]` (its README has the list). Never send
+real users' posts to it: it keeps its queue as plain JSON on disk.
 
 ```bash
 # 1. The mock's API (terminal 1), delivering to the development forum's webhook
