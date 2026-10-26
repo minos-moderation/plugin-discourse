@@ -6,9 +6,10 @@ publikuje post, publikuje go z zamaskowanymi fragmentami, odrzuca go albo zostaw
 moderatorom — zgodnie z ustawieniami administratora forum. Jest częścią projektu Minos;
 licencja GPL-2.0 (plik `LICENSE`).
 
-> Trasa B2B bramy nie jest jeszcze otwarta produkcyjnie. Do tego czasu wtyczkę można
-> uruchomić z bramą testową (atrapą) z repozytorium `minos-moderation/client-php` — patrz
-> `docs/development.md`.
+> Wtyczka korzysta z asynchronicznej trasy bramy (`POST /api/v1/b2b/oceny`), otwartej
+> produkcyjnie od 25 października 2026: brama przyjmuje post od razu, a werdykt odsyła
+> później podpisanym webhookiem. Do wypróbowania wtyczki bez klucza służy atrapa bramy
+> z repozytorium `minos-moderation/client-php` — patrz `docs/development.md`.
 
 ## Jak to działa
 
