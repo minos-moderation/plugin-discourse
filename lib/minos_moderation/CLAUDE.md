@@ -5,7 +5,8 @@ Two kinds of file, kept apart so that the rules which decide a post run without 
 - **Standalone** (plain Ruby and its standard library; no Rails, no Discourse constant):
   `signature.rb`, `webhook_payload.rb`, `scores.rb`, `text.rb`, `decision.rb`,
   `gateway_client.rb`. `spec/lib/` requires them directly and CI runs those specs with
-  `rspec` alone. None requires another: in Discourse, Zeitwerk loads them.
+  `rspec` alone. None requires another: in Discourse, Zeitwerk loads them. `text.rb`
+  reads `html_entities.json`, plain data (Zeitwerk loads only `.rb` files).
 - **Platform touch points**, thin, and the only way in to Discourse: `engine.rb`,
   `settings.rb`, `store.rb`, `new_post_handler.rb`, `submission.rb`, `receiver.rb`,
   `verdict_applier.rb`, `sweep.rb`, `minos_gateway_problem.rb`. Their specs need the

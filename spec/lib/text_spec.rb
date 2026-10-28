@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "json"
 require_relative "../../lib/minos_moderation/text" unless defined?(MinosModeration::Text)
 
 # What the gateway is sent for a post, and how its masks come back onto the Markdown.
@@ -37,9 +38,10 @@ RSpec.describe "MinosModeration::Text" do
       markup.each { |token| expect(sent).not_to include(token) }
     end
 
-    it "sends HTML as it is, attributes included, so nothing hides in them" do
-      raw = %(<span title="ukryty tytuł">widoczny</span>)
-      expect(text.for_submission(raw)[:text]).to eq(raw)
+    it "removes HTML tags in a word, and sends what they carry at the end, never inside it" do
+      raw = %(zak<span title="ukryty tytuł">a</span>zane i <kbd>dalej</kbd>)
+      sent = text.for_submission(raw)[:text]
+      expect(sent).to eq(%(zakazane i dalej\n\n<span title="ukryty tytuł">))
     end
 
     it "sends the raw text of a post that is markup only, rather than nothing" do
@@ -79,6 +81,179 @@ RSpec.describe "MinosModeration::Text" do
 
     it "reads invalid UTF-8 without raising" do
       expect(text.for_submission("zły \xFF bajt".b)[:text]).to include("zły")
+    end
+  end
+
+  describe "the text a reader sees (spec/fixtures/reader_view.json)" do
+    # The same corpus runs against Discourse's own rendering in
+    # spec/integration/text_reader_view_spec.rb; here "reader" is what Discourse shows by
+    # its source (markdown-it, the BBCode rules, the sanitizer), and "sent" what the plugin
+    # sends for it.
+    corpus =
+      JSON.parse(
+        File.read(File.expand_path("../fixtures/reader_view.json", __dir__), encoding: "UTF-8"),
+      )
+
+    # The words of a text as a reader perceives them: invisible characters do not split
+    # them, and compatibility forms are the letters they show.
+    def words(shown)
+      shown.unicode_normalize(:nfkc).gsub(/\p{Default_Ignorable_Code_Point}/, "").scan(
+        /[\p{L}\p{M}\p{N}]+/,
+      )
+    end
+
+    it "has the corpus the audit named, and more" do
+      expect(corpus.size).to be >= 14
+      expect(corpus.map { |entry| entry["name"] }.uniq.size).to eq(corpus.size)
+    end
+
+    corpus.each do |entry|
+      it "sends every word a reader sees: #{entry["name"]}" do
+        sent = text.for_submission(entry["raw"])[:text]
+        expect(sent).to eq(entry["sent"])
+        seen = words(entry["reader"])
+        expect(seen).not_to be_empty
+        missing = seen.reject { |word| sent.unicode_normalize(:nfkc).include?(word) }
+        expect(missing).to eq([]), "#{entry["raw"].inspect} sends #{sent.inspect}"
+      end
+    end
+
+    it "keeps a word split only by markup whole, as the reader sees it" do
+      expect(text.for_submission("k&#117;rwa")[:text]).to eq("kurwa")
+      expect(text.for_submission("zak<!-- -->azane")[:text]).to eq("zakazane")
+      quote = text.for_submission("Zwykła odpowiedź [quote=Kasia, SLOWO_UKRYTE] koniec.")[:text]
+      expect(quote).to include("SLOWO_UKRYTE").and include("koniec.")
+    end
+  end
+
+  describe "HTML in a post" do
+    def sent(raw)
+      text.for_submission(raw)[:text]
+    end
+
+    it "leaves a line break for a block tag, and nothing for an inline one" do
+      expect(sent("jeden<br>dwa<p>trzy</p>cztery")).to eq("jeden\ndwa\ntrzy\ncztery")
+      expect(sent("<em>zak</em><strong>aza</strong><sup>ne</sup>")).to eq("zakazane")
+    end
+
+    it "keeps an image's alt text and title in place" do
+      shown = sent(%(Zobacz <img alt="kot" title="mój kot"> tu))
+      expect(shown).to start_with("Zobacz kot mój kot tu")
+    end
+
+    it "sends attributes and unknown tags at the end, and bare known tags not at all" do
+      expect(sent(%(<a href="https://e.test/x" title="podpowiedź">link</a>))).to eq(
+        %(link\n\n<a href="https://e.test/x" title="podpowiedź">),
+      )
+      expect(sent("<b>tekst</b> <slowo>")).to eq("tekst\n\n<slowo>")
+    end
+
+    it "removes a comment with its text, sending the text at the end" do
+      expect(sent("przed <!-- ukryty komentarz --> po")).to eq("przed  po\n\n ukryty komentarz")
+      expect(sent("a<!-->b")).to eq("ab")
+      expect(sent("a <!-- nigdy nie zamknięty")).to eq("a <!-- nigdy nie zamknięty")
+    end
+
+    it "decodes entities in what goes to the end, too" do
+      expect(sent(%(x<span title="k&#117;rwa">y</span>))).to eq(%(xy\n\n<span title="kurwa">))
+    end
+  end
+
+  describe "character references" do
+    def sent(raw)
+      text.for_submission(raw)[:text]
+    end
+
+    it "decodes them as a browser does, also a legacy name without its semicolon" do
+      expect(sent("&lt;b&gt; &amp &AMP; &notit; &#x6B;&#X75;")).to eq("<b> & & ¬it; ku")
+      expect(sent("&#150; &#0; &#1114112; &#xD800;")).to eq("– \uFFFD \uFFFD \uFFFD")
+    end
+
+    it "leaves what is no reference as it is written" do
+      expect(sent("&bogus; & &#; &#x;")).to eq("&bogus; & &#; &#x;")
+    end
+
+    it "never lets a mask fall on a decoded character" do
+      raw = "k&#117;rwa i kurwa"
+      sent = text.for_submission(raw)[:text]
+      expect(sent).to eq("kurwa i kurwa")
+      expect(text.apply_masks(raw, sent, sent.sub("kurwa", mask * 5))).to be_nil
+      masked = text.apply_masks(raw, sent, sent.sub(/kurwa\z/, mask * 5))
+      expect(masked[:raw]).to eq("k&#117;rwa i #{mask * 5}")
+    end
+  end
+
+  describe "characters a reader does not see" do
+    it "go from the text and from the title" do
+      sent = text.for_submission("zak\u00ADazane z\u200Bdanie", "Ty\u00ADtu\u2060ł")[:text]
+      expect(sent).to eq("Tytuł\n\nzakazane zdanie")
+    end
+
+    it "go without hiding the characters around them from a mask" do
+      raw = "zak\u00ADazane"
+      sent = text.for_submission(raw)[:text]
+      masked = text.apply_masks(raw, sent, mask * sent.length)
+      expect(masked[:raw]).to eq("#{mask * 3}\u00AD#{mask * 5}")
+    end
+  end
+
+  describe "emphasis" do
+    def sent(raw)
+      text.for_submission(raw)[:text]
+    end
+
+    it "removes single * and _ markers as markdown-it does, keeping an escaped one" do
+      expect(sent("zak*a*zane i *całe słowo* i _podkreślone_")).to eq(
+        "zakazane i całe słowo i podkreślone",
+      )
+      expect(sent("snake_case_name i 2 * 3 * 4")).to eq("snake_case_name i 2 * 3 * 4")
+      expect(sent("zak\\*a\\*zane")).to eq("zak\\*a\\*zane")
+    end
+
+    it "carries a mask over the removed markers" do
+      raw = "zak*a*zane"
+      sent = text.for_submission(raw)[:text]
+      expect(text.apply_masks(raw, sent, mask * 8)[:raw]).to eq("#{mask * 3}*#{mask}*#{mask * 4}")
+    end
+  end
+
+  describe "a quote or details tag Discourse does not make a block of" do
+    def sent(raw)
+      text.for_submission(raw)[:text]
+    end
+
+    it "is sent as written inside code, an HTML block or another BBCode block" do
+      inside_code = "```\n[quote=a, SLOWO]\nx\n[/quote]\n```"
+      expect(sent(inside_code)).to eq("[quote=a, SLOWO]\nx\n[/quote]")
+      inside_html = "<div>\n[quote=a, SLOWO]\nx\n[/quote]\n</div>"
+      expect(sent(inside_html)).to include("[quote=a, SLOWO]")
+      bounded = "[spoiler]\n[quote=a, SLOWO]\nx\n[/spoiler]\n[/quote]"
+      expect(sent(bounded)).to include("[quote=a, SLOWO]").and include("[/quote]")
+    end
+
+    it "is sent as written when text follows its closing tag, or it is indented" do
+      expect(sent("[quote=a, SLOWO]x[/quote] dalej")).to eq("[quote=a, SLOWO]x[/quote] dalej")
+      expect(sent("[quote=a, SLOWO]x[/quote] ")).to eq("[quote=a, SLOWO]x[/quote]")
+      expect(sent("  [quote=a, SLOWO]\nx\n[/quote]")).to eq("[quote=a, SLOWO]\nx\n[/quote]")
+    end
+
+    it "is sent as written for an unquoted name in capitals, which Discourse does not look up" do
+      expect(sent("[QUOTE=a, SLOWO]\nx\n[/QUOTE]")).to eq("[QUOTE=a, SLOWO]\nx\n[/QUOTE]")
+      expect(sent("[QUOTE=\"a, post:1\"]\nx\n[/QUOTE]")).to eq("a\n\nx")
+    end
+
+    it "is a block on one line when the line ends with its closing tag" do
+      expect(sent("[quote=\"a, post:1\"]cytat[/quote]")).to eq("a\ncytat")
+    end
+
+    it "is a block nested in another quote, and the outer one too" do
+      raw = "[quote=\"a, post:1\"]\n[quote=\"b, post:2\"]\nx\n[/quote]\ny\n[/quote]"
+      expect(sent(raw)).to eq("a\n\nb\n\nx\n\ny")
+    end
+
+    it "is not closed by a closing tag that closes a nested one" do
+      raw = "[quote=a, SLOWO]\n[quote=b]\nx\n[/quote]"
+      expect(sent(raw)).to eq("[quote=a, SLOWO]\nb\n\nx")
     end
   end
 

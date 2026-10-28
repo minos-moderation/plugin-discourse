@@ -178,12 +178,18 @@ Do bramy trafia, dla każdego wstrzymanego posta:
   treści; każda ponowna wysyłka ma własny numer. Werdykt dla wcześniejszej próby jest
   stosowany tylko wtedy, gdy ta próba wysłała ten sam tekst co ostatnia (i tylko raz na
   post); inaczej jest pomijany;
-- **tekst**: tytuł nowego tematu (jeśli to nowy temat), pusty wiersz i treść posta.
-  Z Markdownu usuwane są tylko znaczniki (np. `**`, `[quote]`, składnia linków i
-  obrazków), a zostaje każde słowo, które czytelnik może zobaczyć — także w cytatach
-  (razem z nazwą pokazaną w nagłówku cytatu), spoilerach, podsumowaniach sekcji
-  zwijanych, tekstach alternatywnych i tytułach obrazków, żeby nie dało się niczego w
-  nich ukryć. Wysyłane jest **pierwsze 3000 znaków** (limit bramy);
+- **tekst** — taki, jaki widzi czytelnik: tytuł nowego tematu (jeśli to nowy temat),
+  pusty wiersz i treść posta. Usuwane są znaczniki Markdownu i HTML (np. `**`, `*`,
+  `[quote]`, `<b>`, komentarze `<!-- -->`), encje HTML zamieniane są na znaki (np.
+  `&#117;` na `u`), a znaki niewidoczne (np. miękki dywiz) znikają — tak, żeby słowo
+  rozdzielone znacznikiem dotarło do bramy w całości. Zostaje każde słowo, które
+  czytelnik może zobaczyć — także w cytatach (razem z nazwą pokazaną w nagłówku
+  cytatu), spoilerach, podsumowaniach sekcji zwijanych, tekstach alternatywnych i
+  tytułach obrazków, żeby nie dało się niczego w nich ukryć. `[quote=…]`, którego
+  Discourse nie pokazuje jako cytatu (np. w środku linii albo bez zamknięcia), idzie
+  dosłownie. To, co usunięty znacznik HTML albo komentarz niósł (np. treść podpowiedzi,
+  tekst komentarza), jest dopisywane na końcu. Wysyłane jest **pierwsze 3000 znaków**
+  (limit bramy);
 - **profil** z ustawienia `minos_profile`;
 - **sygnały antyspamowe**: liczba linków w poście, to, czy to pierwszy post autora, oraz
   do 10 domen, do których prowadzą linki i obrazki (np. `example.com`, bez reszty adresu).

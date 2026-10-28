@@ -1,0 +1,17 @@
+[
+  {"name": "emphasis inside a word", "raw": "zak*a*zane", "sent": "zakazane", "reader": "zakazane"},
+  {"name": "underscores inside a word stay text", "raw": "zak_a_zane", "sent": "zak_a_zane", "reader": "zak_a_zane"},
+  {"name": "an inline HTML tag inside a word", "raw": "zak<b>a</b>zane", "sent": "zakazane", "reader": "zakazane"},
+  {"name": "a numeric character reference", "raw": "k&#117;rwa", "sent": "kurwa", "reader": "kurwa"},
+  {"name": "a named character reference", "raw": "k&uacute;rwa", "sent": "kúrwa", "reader": "kúrwa"},
+  {"name": "a soft hyphen as a reference", "raw": "zak&shy;azane", "sent": "zakazane", "reader": "zak\u00adazane"},
+  {"name": "an HTML comment inside a word", "raw": "zak<!-- -->azane", "sent": "zakazane", "reader": "zakazane"},
+  {"name": "a quote tag opened in the middle of a line", "raw": "Zwykła odpowiedź [quote=Kasia, SLOWO_UKRYTE] koniec.", "sent": "Zwykła odpowiedź [quote=Kasia, SLOWO_UKRYTE] koniec.", "reader": "Zwykła odpowiedź [quote=Kasia, SLOWO_UKRYTE] koniec."},
+  {"name": "a quote tag never closed, at the start of a line", "raw": "[quote=Kasia, SLOWO_UKRYTE]\nDalszy tekst.", "sent": "[quote=Kasia, SLOWO_UKRYTE]\nDalszy tekst.", "reader": "[quote=Kasia, SLOWO_UKRYTE]\nDalszy tekst."},
+  {"name": "a closed quote shows its title only", "raw": "[quote=\"Kasia, post:1, topic:2\"]\ncytat\n[/quote]\nodpowiedź", "sent": "Kasia\n\ncytat\n\nodpowiedź", "reader": "Kasia:\ncytat\nodpowiedź"},
+  {"name": "a collapsed section", "raw": "[details=\"Podsumowanie\"]\nukryta treść\n[/details]", "sent": "Podsumowanie\nukryta treść", "reader": "Podsumowanie\nukryta treść"},
+  {"name": "an image's alt text", "raw": "Zobacz ![alt obrazka|690x388](upload://abc.png) tu", "sent": "Zobacz alt obrazka tu", "reader": "Zobacz alt obrazka tu"},
+  {"name": "a title attribute the sanitizer removes", "raw": "<span title=\"SLOWO_W_TITLE\">x</span>", "sent": "x\n\n<span title=\"SLOWO_W_TITLE\">", "reader": "x"},
+  {"name": "a tag shown as code", "raw": "`<span title=\"SLOWO_W_KODZIE\">x</span>`", "sent": "x\n\n<span title=\"SLOWO_W_KODZIE\">", "reader": "<span title=\"SLOWO_W_KODZIE\">x</span>"},
+  {"name": "a poll's question and options", "raw": "[poll type=regular]\n# Pytanie ankiety\n* Opcja pierwsza\n* Opcja druga\n[/poll]", "sent": "[poll type=regular]\nPytanie ankiety\n* Opcja pierwsza\n* Opcja druga\n[/poll]", "reader": "Pytanie ankiety\nOpcja pierwsza\nOpcja druga"}
+]

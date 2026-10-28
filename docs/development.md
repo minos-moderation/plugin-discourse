@@ -20,6 +20,8 @@ plugin. The gateway's contract, from the client's side, is `docs/contract.md` in
 | `spec/lib/`, `spec/repo/` | The standalone tier (plain rspec) |
 | `spec/requests/`, `spec/jobs/`, `spec/integration/` | The Discourse tier (plugin harness) |
 | `spec/fixtures/signature.json` | The gateway's signature vector, a byte-for-byte copy of client-php's `vectors/signature.json` |
+| `spec/fixtures/reader_view.json` | The corpus of posts whose sent text must hold every word a reader sees (both tiers) |
+| `lib/minos_moderation/html_entities.json` | HTML's named character references, the data `Text` decodes them with |
 | `.github/workflows/release.yml` | On a `v*` tag: checks `plugin.rb`'s version against the tag (`.github/scripts/check-release-version.sh`) and creates the GitHub Release |
 
 The standalone files (`signature.rb`, `webhook_payload.rb`, `scores.rb`, `text.rb`,
@@ -37,9 +39,9 @@ Every Discourse touch point sits in a thin class (`settings.rb`, `store.rb`,
    note). It skips a disabled plugin, staff (`minos_skip_staff`), bots and personal
    messages. `Submission.enqueue` creates the entry and enqueues `Jobs::MinosSubmit`.
 2. `Submission#run` claims the entry (`queued` → `sending`) under `Store.lock` and numbers
-   the attempt, reduces the post with `Text.for_submission` (title, blank line, Markdown
-   reduced to plain text — quote names, image alt texts and titles kept — first 3000
-   characters), stores the digest, builds the body with `Scores.request_body` (item id
+   the attempt, reduces the post with `Text.for_submission` (title, blank line, the text
+   a reader sees — see "What `tekst` is" below — first 3000 characters), stores the
+   digest, builds the body with `Scores.request_body` (item id
    `discourse:<reviewable id>.<attempt>`, `links`, `author_first_post`, and
    `link_domains` from `Text.link_hosts` reduced with `PublicSuffix.domain`) and POSTs it
    with `GatewayClient` over `FinalDestination::HTTP`. `Scores.classify` reads the answer:
@@ -79,6 +81,37 @@ Every Discourse touch point sits in a thin class (`settings.rb`, `store.rb`,
    second application of a verdict whose job was lost after 2 min, giving up (a note, the
    post left) on a verdict that could not be applied for 24 h, and removal of a `done` or
    `auto_published` entry after 30 days.
+
+### What `tekst` is
+
+The rule: **the text sent for assessment is the text a reader sees**, and nothing a
+reader can see is dropped; where removing something is not certain, more is sent. So
+`Text.for_submission` reduces the raw Markdown as Discourse renders it:
+
+- Markdown markup goes (`**`, single `*`/`_` emphasis as markdown-it reads it, heading and
+  blockquote markers, link and image syntax — the alt text and title stay, the link's
+  URL too); a quote leaves the title Discourse shows, a details block its summary.
+- `[quote=…]`/`[details=…]` is a block only where Discourse's `bbcode-block.js` makes one
+  (`Text.block_tags`): at the first column, closed by its tag at the very end of the line
+  or alone on a later line (nested tags counted), never in fenced code, an HTML block or
+  another BBCode block. Elsewhere it is sent as written, attribute included.
+- HTML tags (markdown-it's grammar) go; a block tag leaves a line break, an `<img>` its
+  alt text and title. An HTML comment goes with its text. Whatever a removed tag or
+  comment carried (attribute values, an unknown tag name, the comment's text) is added
+  at the end of the text, after a blank line: a tooltip or a tag shown as code stays
+  assessed, and a word the tag split reaches the gateway whole.
+- Character references are decoded as a browser decodes them (`html_entities.json`, the
+  HTML standard's named references, generated from Python's `html.entities.html5`);
+  decoded characters have no origin, so a mask on one holds the post.
+- Characters invisible by default (`\p{Default_Ignorable_Code_Point}`: a soft hyphen,
+  zero-width spaces) go, from the title too.
+
+`spec/fixtures/reader_view.json` is the corpus: `spec/lib/text_spec.rb` checks the sent
+text of each entry and the property against the reader's view as Discourse's source
+describes it; `spec/integration/text_reader_view_spec.rb` checks the property against
+Discourse's own `PrettyText.cook` in CI. A change of this reduction changes the digest of
+a post in flight at the upgrade: its verdict is then not applied (`edited`) and a
+moderator decides, the safe direction.
 
 State lives in `PluginStore` (`minos-moderation`, key `pending:<reviewable id>`, plus
 `problem` and `limit`); see `Store` for the fields. It never holds the unmasked text of a masked post
@@ -291,7 +324,10 @@ Verified in Discourse's source (`main`, September 2026) or in
 
 Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 
-- that the Discourse-tier specs added after the first CI run pass as written;
+- that the Discourse-tier specs added after the first CI run pass as written; in
+  particular `text_reader_view_spec.rb`, whose reader views follow Discourse's source
+  (`bbcode-block.js`, `quotes.js`, the details and poll rules, the sanitizer's allow list)
+  and markdown-it 15, checked locally, but not `PrettyText.cook` itself;
 - `PublicSuffix.domain` is called as the gem documents it (nil for an invalid name); the
   plugin sends no `link_domains` when the constant is missing;
 - the exact oldest Discourse version with every API above (`ReviewableNote` in
