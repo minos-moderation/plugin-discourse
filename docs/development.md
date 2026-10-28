@@ -127,8 +127,38 @@ LOAD_PLUGINS=1 bin/rspec plugins/minos-moderation/spec
 ```
 
 CI runs them through Discourse's reusable workflow
-(`discourse/.github/.github/workflows/discourse-plugin.yml@v1`) against core's `latest`.
-Its linting job is skipped: the Gemfile carries rspec alone (no `rubocop-discourse`).
+(`discourse/.github/.github/workflows/discourse-plugin.yml`, pinned to the commit of its
+tag `v1`) against core's `latest`. Its linting job is skipped: the Gemfile carries rspec
+alone (no `rubocop-discourse`).
+
+**CI** (`.github/workflows/tests.yml`) runs on every pull request, on every push to
+`main` and **weekly** (`schedule`, Tuesdays 03:41 UTC), so the promise "works on
+Discourse `latest`" is checked even when nobody opens a pull request. GitHub starts a
+scheduled run from the default branch only, so the schedule takes effect once it is on
+`main`; a failed weekly run is an ordinary red run, without retries. The
+`workflow-lint` job runs `actionlint` (which also passes every `run:` script through the
+runner's `shellcheck`) on the workflows and `shellcheck` on `.github/scripts/*.sh`.
+
+**Pins.** Every `uses:` names a commit SHA with the version in a trailing comment (no
+`@v<n>`: a moving tag could change CI without a commit here), one SHA per action across
+`tests.yml` and `release.yml`; `actionlint` is a pinned release whose tarball is checked
+against its SHA-256. Pins do not move by themselves, which is the point and the price:
+refresh them in a pull request of their own, now and then and whenever an upstream fix
+is needed. To refresh one, resolve the upstream tag itself, never a SHA from memory or a
+third-party list, and check that the tag names a commit (no `^{}` line, or take the
+`^{}` one):
+
+```bash
+git ls-remote https://github.com/actions/checkout 'refs/tags/v5.0.0*'
+git ls-remote https://github.com/ruby/setup-ruby 'refs/tags/v1.335.0*'
+git ls-remote https://github.com/discourse/.github 'refs/tags/v1*'
+```
+
+and for `actionlint`, take `ACTIONLINT_SHA256` from the release's
+`actionlint_<version>_checksums.txt` (line `…_linux_amd64.tar.gz`) and compare it with
+`sha256sum` of the downloaded tarball. Discourse's reusable workflow follows core, so a
+weekly run that fails in the `discourse` job after a core change may need its pin moved
+to the current `v1` first.
 
 ## The mock gateway with a development Discourse
 
@@ -256,8 +286,8 @@ Verified in Discourse's source (`main`, September 2026) or in
 - spec helpers `fab!`, `expect_enqueued_with`, `track_log_messages`, the
   `reviewable_queued_post` and `reviewable_queued_post_topic` fabricators, WebMock with
   `allow_localhost`;
-- the reusable CI workflow `discourse/.github/.github/workflows/discourse-plugin.yml@v1`
-  and its inputs `name` and `skip_linting`.
+- the reusable CI workflow `discourse/.github/.github/workflows/discourse-plugin.yml`
+  (tag `v1`, pinned by its commit) and its inputs `name` and `skip_linting`.
 
 Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 

@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly, so that the promise "works on Discourse latest" is checked without a pull
+  # request (the discourse job runs against core's latest). GitHub starts scheduled runs
+  # from the default branch only; a failing one shows as a red run, with no retry.
+  schedule:
+    - cron: "41 3 * * 2" # Tuesdays, 03:41 UTC
 
 permissions:
   contents: read
@@ -22,16 +27,19 @@ jobs:
       MINOS_CLIENT_PHP: ${{ github.workspace }}/tmp/client-php
       MINOS_REQUIRE_MOCK_GATEWAY: "1"
     steps:
-      - uses: actions/checkout@v4
-      - name: Check out client-php (the mock gateway), pinned
-        uses: actions/checkout@v4
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
         with:
+          persist-credentials: false
+      - name: Check out client-php (the mock gateway), pinned
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        with:
+          persist-credentials: false
           repository: minos-moderation/client-php
           # client-php's main at fb8d1ff, which includes f85c6ed (the mock's masks keep the
           # sent text's length).
           ref: fb8d1ffe3be6d1da2f0227c671dfebc44c19554e
           path: tmp/client-php
-      - uses: ruby/setup-ruby@v1
+      - uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f  # v1.335.0
         with:
           ruby-version: "3.3"
           bundler-cache: true
@@ -63,9 +71,10 @@ jobs:
 
   # The specs that need Discourse (spec/requests, spec/jobs, spec/integration), run by
   # Discourse's own plugin workflow against core's `latest`. Its linting job is skipped:
-  # the plugin's Gemfile carries rspec alone, without rubocop-discourse.
+  # the plugin's Gemfile carries rspec alone, without rubocop-discourse. The workflow is
+  # pinned to the commit its moving tag v1 named on 2026-10-28.
   discourse:
-    uses: discourse/.github/.github/workflows/discourse-plugin.yml@v1
+    uses: discourse/.github/.github/workflows/discourse-plugin.yml@83e5990bc53a4e0eddabda672558e29382072bd6  # v1
     with:
       name: minos-moderation
       skip_linting: true
@@ -86,3 +95,31 @@ jobs:
         run: |
           version="$(sed -n 's/^#[[:space:]]*version:[[:space:]]*//p' plugin.rb | tail -n 1)"
           bash .github/scripts/check-release-version.sh "v$version"
+
+  # The workflows, with actionlint (which also runs the runner's shellcheck on every `run:`
+  # script), and the scripts they call, with shellcheck. actionlint is a pinned release,
+  # checked against its published SHA-256 before it runs.
+  workflow-lint:
+    name: actionlint and shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ACTIONLINT_VERSION: "1.7.12"
+      ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Install actionlint (pinned, checksum verified)
+        run: |
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          url="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" "$url"
+          echo "${ACTIONLINT_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
+      - name: actionlint
+        run: |
+          shellcheck --version
+          "$RUNNER_TEMP/actionlint" -color
+      - name: shellcheck on .github/scripts
+        run: shellcheck .github/scripts/*.sh
