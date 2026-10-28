@@ -50,6 +50,15 @@ module MinosModeration
     # A gateway error code, as the contract spells them. Anything else is not repeated.
     CODE = /\A[a-z0-9_]{1,64}\z/
 
+    # The `429` codes after which the gateway accepts nothing for a while, and the state
+    # the administrator is shown for each: the key's daily limit, or the gateway's shared
+    # ceiling and full queue. The key's per-minute and in-flight limits pass in seconds.
+    LIMITS = {
+      "limit_dobowy_klucza" => "daily_limit",
+      "limit_globalny_b2b" => "overloaded",
+      "kolejka_pelna" => "overloaded",
+    }.freeze
+
     # What an answer means for the plugin: `:accepted`, `:retry` (keep the post pending
     # and send again after `retry_in` seconds, or after a backoff when nil) or
     # `:config_error` (the request is wrong and sending again will not help).
@@ -156,6 +165,12 @@ module MinosModeration
       end
 
       Outcome.new(kind: :retry, http: nil, code: nil, retry_in: nil)
+    end
+
+    # @param outcome [Outcome] an answer, read.
+    # @return [String, nil] the {LIMITS} state the answer puts the gateway in, or nil.
+    def self.limit_state(outcome)
+      outcome.http == 429 ? LIMITS[outcome.code] : nil
     end
 
     # @param attempts [Integer] how many attempts have failed so far (at least 1).

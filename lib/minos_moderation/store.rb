@@ -13,19 +13,25 @@ module MinosModeration
   #   `received_at`, `handled_at`;
   # - `attempts` and `attempt` (the current attempt, the suffix of the item id);
   #   `core_hold` (the reason Discourse itself held the post, if it did); `text_digest` and
-  #   `truncated` (what was sent, without the text); `verdict` (the parsed payload, minus
-  #   `ocenzurowany` once applied); `original_digest` and `original_title_digest` (never
+  #   `truncated` (what the current attempt sent, without the text); `digests` (every
+  #   attempt's text digest, by attempt number as a String); `verdict` (the parsed payload,
+  #   minus `ocenzurowany` once applied); `original_digest` and `original_title_digest` (never
   #   the unmasked text); `post_id` (of a post the failure mode published); `outcome` and
   #   `reason` (what was done, and why).
   #
-  # Plus `problem`: the gateway's last refusal of the forum's configuration, for the admin
-  # dashboard. Every read-modify-write of an entry happens under {lock}.
+  # Plus, for the admin dashboard, `problem` (the gateway's last refusal of the forum's
+  # configuration) and `limit` (the gateway's last "not before T": a daily limit or an
+  # overload). Kept apart, so that neither hides the other; the gateway's next `202`
+  # clears both. Every read-modify-write of an entry happens under {lock}.
   module Store
     # The prefix of an entry's key.
     PREFIX = "pending:"
 
     # The key of the last configuration problem.
     PROBLEM = "problem"
+
+    # The key of the last refusal for a while (`Scores::LIMITS`).
+    LIMIT = "limit"
 
     # @param id [Integer] a reviewable's id.
     # @return [Hash{String => Object}, nil] its entry.
@@ -109,11 +115,41 @@ module MinosModeration
       )
     end
 
-    # Forgets the last configuration problem: the gateway accepted a request.
+    # @return [Hash{String => Object}, nil] the gateway's last refusal for a while:
+    #   `reason` (`daily_limit` or `overloaded`), `until` (epoch seconds), `http`, `kod`,
+    #   `at`.
+    def self.limit
+      value = ::PluginStore.get(PLUGIN_NAME, LIMIT)
+      value.is_a?(Hash) ? value.to_h : nil
+    end
+
+    # @param reason [String] `daily_limit` or `overloaded` (`Scores::LIMITS`).
+    # @param until_at [Integer] epoch seconds before which the gateway accepts nothing: now
+    #   plus `ponow_za_s` as the gateway gave it, never the plugin's capped pause.
+    # @param http [Integer] the gateway's status.
+    # @param code [String] the gateway's `blad.kod`, already checked for its shape.
+    # @return [void]
+    def self.record_limit(reason:, until_at:, http:, code:)
+      ::PluginStore.set(
+        PLUGIN_NAME,
+        LIMIT,
+        {
+          "reason" => reason,
+          "until" => Integer(until_at),
+          "http" => http,
+          "kod" => code,
+          "at" => Time.now.to_i,
+        },
+      )
+    end
+
+    # Forgets the last configuration problem and the last refusal for a while: the gateway
+    # accepted a request.
     #
     # @return [void]
     def self.clear_problem
       ::PluginStore.remove(PLUGIN_NAME, PROBLEM) if problem
+      ::PluginStore.remove(PLUGIN_NAME, LIMIT) if limit
     end
 
     # @param id [Integer] a reviewable's id.

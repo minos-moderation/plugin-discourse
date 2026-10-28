@@ -55,6 +55,8 @@ RSpec.describe Jobs::MinosApplyVerdict do
   describe "ocenzurowane" do
     let(:masked) { sent[:text].sub("world", mask * 5) }
 
+    # Also the control of "never approves when the masked text did not persist": an edit
+    # that persists is approved.
     it "publishes the masked text and keeps the original" do
       verdict = assessed("ocenzurowane", "kategorie" => ["wulgaryzmy"], "ocenzurowany" => masked)
       apply_verdict(verdict)
@@ -115,6 +117,16 @@ RSpec.describe Jobs::MinosApplyVerdict do
       apply_verdict(assessed("ocenzurowane", "ocenzurowany" => masked))
       expect(reviewable).to be_pending
       expect(entry).to include("outcome" => "leave", "reason" => "action_failed")
+    end
+
+    it "never approves when the masked text did not persist, although the edit reported success" do
+      # A save that reports success while the stored payload keeps the original text.
+      allow_any_instance_of(ReviewableQueuedPost).to receive(:update_fields).and_return(true)
+      apply_verdict(assessed("ocenzurowane", "ocenzurowany" => masked))
+      expect(reviewable).to be_pending
+      expect(reviewable.payload["raw"]).to eq(raw)
+      expect(entry).to include("outcome" => "leave", "reason" => "action_failed")
+      expect(reviewable.target_id).to be_nil
     end
 
     it "leaves the post when the masks cannot be carried onto it" do
@@ -205,6 +217,38 @@ RSpec.describe Jobs::MinosApplyVerdict do
       late(assessed("zablokowane", "kategorie" => ["nekanie"]))
       expect(post).to be_hidden
       expect(entry).to include("status" => "done", "outcome" => "hide")
+    end
+
+    it "tells the author when it hides a post, as Discourse does" do
+      expect_enqueued_with(job: :send_system_message, args: { user_id: post.user_id }) do
+        late(assessed("zablokowane"))
+      end
+      expect(post).to be_hidden
+    end
+
+    describe "with wsparcie" do
+      let(:support_note) do
+        I18n.with_locale(SiteSetting.default_locale) { I18n.t("minos_moderation.notes.support") }
+      end
+
+      it "never hides the post on zablokowane, notes the signal and does not message the author" do
+        expect_not_enqueued_with(job: :send_system_message) do
+          late(assessed("zablokowane", "kategorie" => ["samookaleczenie"], "wsparcie" => true))
+        end
+        expect(post).not_to be_hidden
+        expect(entry).to include("status" => "done", "outcome" => "keep", "reason" => "support")
+        expect(notes).to include(support_note)
+      end
+
+      it "keeps the post visible when the masks cannot be carried onto it" do
+        unmappable = "#{mask}#{sent[:text][1..]}X"
+        expect_not_enqueued_with(job: :send_system_message) do
+          late(assessed("ocenzurowane", "ocenzurowany" => unmappable, "wsparcie" => true))
+        end
+        expect(post).not_to be_hidden
+        expect(entry).to include("outcome" => "keep", "reason" => "mask_unmappable")
+        expect(notes).to include(support_note)
+      end
     end
 
     it "masks the post on ocenzurowane" do

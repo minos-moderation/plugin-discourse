@@ -5,10 +5,12 @@ module MinosModeration
   #
   # The contract's rules for an answer: `202` means the verdict will be delivered to the
   # webhook; `429` and `503` (and a timeout or a `5xx`) mean "keep it pending and send it
-  # again after `ponow_za_s`, or after a backoff"; any other `4xx` is a configuration
-  # error that sending again cannot fix, so the failure mode decides the post and the
-  # administrator sees the code on the dashboard. The log gets the status and the code,
-  # never the text, the key or the body.
+  # again after `ponow_za_s`, or after a backoff" — unless `ponow_za_s` ends after the
+  # post's time-out, when the failure mode applies at once; any other `4xx` is a
+  # configuration error that sending again cannot fix, so the failure mode decides the
+  # post and the administrator sees the code on the dashboard. A daily limit or an
+  # overload (`Scores::LIMITS`) is shown there too, with the time it ends, until the next
+  # `202`. The log gets the status and the code, never the text, the key or the body.
   class Submission
     # Creates a post's entry and schedules its first attempt.
     #
@@ -56,7 +58,14 @@ module MinosModeration
       return VerdictApplier.new(@id).apply_failure(:no_text) if text[:text].empty?
 
       Store.update(@id) do |entry|
-        entry.merge("text_digest" => text[:digest], "truncated" => text[:truncated])
+        # Every attempt's digest, so a verdict for an earlier attempt of the same text
+        # still counts (`Decision.verdict_for_entry?`).
+        digests = entry["digests"].is_a?(Hash) ? entry["digests"] : {}
+        entry.merge(
+          "text_digest" => text[:digest],
+          "truncated" => text[:truncated],
+          "digests" => digests.merge(attempt.to_s => text[:digest]),
+        )
       end
       meta = {
         "links" => Text.link_count(raw),
@@ -157,17 +166,52 @@ module MinosModeration
 
     def retry_later(outcome)
       now = Time.now.to_i
+      timeout_s = Settings.timeout_s
       delay = nil
+      too_late = false
       Store.update(@id) do |entry|
         next nil unless entry["status"] == "sending"
 
+        too_late =
+          Decision.refusal_outlasts_timeout?(
+            entry,
+            now: now,
+            timeout_s: timeout_s,
+            retry_in: outcome.retry_in,
+          )
+        next nil if too_late
+
         delay = Scores.backoff(entry["attempts"].to_i, outcome.retry_in)
         entry.merge("status" => "queued", "retry_at" => now + delay)
+      end
+      record_limit(outcome, now)
+      if too_late
+        log("refuses until after the post's time-out", outcome)
+        return VerdictApplier.new(@id).apply_failure(:limit)
       end
       return unless delay
 
       log("will retry in #{delay} s", outcome)
       ::Jobs.enqueue_in(delay, :minos_submit, reviewable_id: @id)
+    end
+
+    # Tells the administrator that the gateway accepts nothing until a given time.
+    #
+    # @param outcome [Scores::Outcome] a `:retry` answer.
+    # @param now [Integer] the clock, in seconds.
+    # @return [void]
+    def record_limit(outcome, now)
+      reason = Scores.limit_state(outcome)
+      return unless reason
+
+      # The gateway's own ponow_za_s, not the plugin's pause capped to 15 minutes.
+      wait = outcome.retry_in || Scores::BACKOFF_S
+      Store.record_limit(
+        reason: reason,
+        until_at: now + wait,
+        http: outcome.http,
+        code: outcome.code,
+      )
     end
 
     def refused(outcome)

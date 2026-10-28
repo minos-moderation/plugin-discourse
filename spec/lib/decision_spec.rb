@@ -164,6 +164,21 @@ RSpec.describe "MinosModeration::Decision" do
       end
     end
 
+    it "never hides a post that reads as self-harm, and keeps it for a person to decide" do
+      support = { "wsparcie" => true }
+      blocked = late(verdict("zablokowane", support))
+      expect([blocked.action, blocked.reason, blocked.support]).to eq([:keep, :support, true])
+      leaving = { "censored_action" => "zostaw_moderatorom" }
+      [
+        late(verdict("ocenzurowane", support.merge("ocenzurowany" => "█")), with: leaving),
+        late(verdict("ocenzurowane", support)),
+        late(verdict("ocenzurowane", support.merge("ocenzurowany" => "█")), truncated: true),
+      ].each { |result| expect([result.action, result.reason]).to eq(%i[keep support]) }
+      # A mask that can be carried out still is: it hides nothing.
+      mappable = verdict("ocenzurowane", support.merge("ocenzurowany" => "█"))
+      expect(late(mappable).action).to eq(:mask)
+    end
+
     it "keeps whatever a person decided since" do
       [verdict("zablokowane"), censored, verdict("bezpieczne")].each do |value|
         result = late(value, acted: true)
@@ -282,6 +297,85 @@ RSpec.describe "MinosModeration::Decision" do
     end
   end
 
+  describe "wsparcie over every combination" do
+    let(:qualifications) { %w[bezpieczne ocenzurowane zablokowane nowa] }
+
+    it "is never rejected or hidden, on time or late (shared plugin rule 9)" do
+      visited = []
+      count = 0
+      statuses = %w[ocenione nieocenione inny]
+      masked_texts = [nil, "", "█"]
+      settings =
+        %w[fail-open fail-closed nieznany].product(
+          %w[publikuj_ocenzurowany zostaw_moderatorom nieznane],
+          %w[zostaw_moderatorom odrzuc nieznane],
+        )
+      statuses.product(qualifications, masked_texts).each do |status, qualification, masked|
+        value =
+          verdict(qualification, "status" => status, "ocenzurowany" => masked, "wsparcie" => true)
+        settings.each do |failure_mode, censored_action, blocked_action|
+          chosen = {
+            "failure_mode" => failure_mode,
+            "censored_action" => censored_action,
+            "blocked_action" => blocked_action,
+          }
+          [false, true].product([false, true], [false, true], [false, true]).each do |flags|
+            truncated, acted, edited, core_hold = flags
+            on_time =
+              decision.for_verdict(
+                value,
+                chosen,
+                truncated: truncated,
+                core_hold: core_hold,
+                edited: edited,
+              )
+            late = decision.for_late_verdict(value, chosen, truncated: truncated, acted: acted)
+            [on_time, late].each do |result|
+              expect(%i[reject hide]).not_to include(result.action), [value, chosen, flags].inspect
+              expect(result.support).to be(true)
+            end
+            count += 1
+          end
+        end
+        visited << qualification
+      end
+      # A loop over nothing passes silently: every qualification, the unknown one included,
+      # was decided under every setting and flag.
+      expect(visited.uniq).to match_array(qualifications)
+      expect(count).to eq(statuses.size * qualifications.size * masked_texts.size * 27 * 16)
+    end
+  end
+
+  describe "which attempt's verdict an entry takes" do
+    let(:same) { "a" * 64 }
+    let(:other) { "b" * 64 }
+
+    def takes?(entry, attempt)
+      decision.verdict_for_entry?(entry, attempt)
+    end
+
+    it "takes the current attempt's verdict, as before" do
+      expect(takes?({ "attempt" => 2 }, 2)).to be(true)
+      expect(takes?({ "attempt" => 2, "digests" => { "2" => same } }, 2)).to be(true)
+    end
+
+    it "takes an earlier attempt's verdict when that attempt sent the same text" do
+      entry = { "attempt" => 3, "digests" => { "1" => same, "2" => other, "3" => same } }
+      expect(takes?(entry, 1)).to be(true)
+      expect(takes?(entry, 2)).to be(false)
+    end
+
+    it "takes nothing it cannot tie to the text: no digests, no current digest, a later id" do
+      expect(takes?({ "attempt" => 2 }, 1)).to be(false)
+      expect(takes?({ "attempt" => 2, "digests" => { "1" => same } }, 1)).to be(false)
+      expect(takes?({ "attempt" => 2, "digests" => { "1" => "", "2" => "" } }, 1)).to be(false)
+      expect(takes?({ "attempt" => 2, "digests" => "nie" }, 1)).to be(false)
+      expect(takes?({ "attempt" => 2, "digests" => { "2" => same, "3" => same } }, 3)).to be(false)
+      expect(takes?({}, 1)).to be(false)
+      expect(takes?({ "attempt" => 0 }, 0)).to be(false)
+    end
+  end
+
   describe "what a pending entry needs" do
     let(:now) { 1_000_000 }
     let(:timeout) { 20 * 60 }
@@ -307,6 +401,37 @@ RSpec.describe "MinosModeration::Decision" do
       expect(needs("status" => "submitted", "submitted_at" => now - timeout)).to be_nil
       stuck = { "status" => "queued", "queued_at" => now - timeout - 1, "retry_at" => now + 60 }
       expect(needs(stuck)).to eq(:timeout)
+    end
+
+    it "waits at least twenty minutes, also when a lower timeout is stored" do
+      # Saved as 16 before the minimum was raised: Discourse keeps it, the floor applies.
+      stored = decision.timeout_s(16)
+      expect(stored).to eq(20 * 60)
+      expect(decision.timeout_s("25")).to eq(25 * 60)
+      accepted = { "status" => "submitted", "submitted_at" => now - (16 * 60) - 1 }
+      expect(decision.for_entry(accepted, now: now, timeout_s: stored)).to be_nil
+      late = accepted.merge("submitted_at" => now - (20 * 60) - 1)
+      expect(decision.for_entry(late, now: now, timeout_s: stored)).to eq(:timeout)
+    end
+
+    it "gives the failure mode at once to a refusal that ends after the post's time-out" do
+      # A daily limit: the gateway refuses for 36000 s, while the plugin's own pause is
+      # capped at 900 s. The uncapped value decides, so the post does not wait 20 minutes
+      # for a retry that can only be refused again.
+      queued = { "status" => "sending", "queued_at" => now, "sending_at" => now }
+      outlasts = ->(entry, seconds) do
+        decision.refusal_outlasts_timeout?(entry, now: now, timeout_s: timeout, retry_in: seconds)
+      end
+      expect(outlasts.call(queued, 36_000)).to be(true)
+      expect(outlasts.call(queued, timeout + 1)).to be(true)
+      expect(outlasts.call(queued, timeout)).to be(false)
+      expect(outlasts.call(queued, 30)).to be(false)
+      # The time already waited counts: 19 minutes in, a 90 s refusal ends too late.
+      waited = queued.merge("queued_at" => now - (19 * 60))
+      expect(outlasts.call(waited, 90)).to be(true)
+      expect(outlasts.call(waited, 30)).to be(false)
+      # Without ponow_za_s the backoff stays, and the sweeper times the post out.
+      [nil, 0, -1, "36000"].each { |value| expect(outlasts.call(queued, value)).to be(false) }
     end
 
     it "applies a received verdict again when its job was lost" do

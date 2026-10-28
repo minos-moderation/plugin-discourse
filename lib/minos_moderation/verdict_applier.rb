@@ -7,11 +7,12 @@ module MinosModeration
   #
   # Publishing is `perform(system user, :approve_post)`, rejecting `:reject_post`; a masked
   # publication first edits the queued `raw` (and `title`) with `update_fields`, which
-  # Discourse records in the reviewable's history. Every outcome leaves a note for the
-  # moderators on the review item (a `ReviewableNote` by the system user). When an action
-  # cannot be carried out — the topic was closed meanwhile, the masks do not map onto the
-  # Markdown, the reviewable refuses — the post is left to the moderators, never published
-  # instead.
+  # Discourse records in the reviewable's history, and approves only once the reviewable,
+  # read back from the database, carries exactly the masks. Every outcome leaves a note
+  # for the moderators on the review item (a `ReviewableNote` by the system user). When an
+  # action cannot be carried out — the topic was closed meanwhile, the masks do not map
+  # onto the Markdown, the reviewable refuses or does not keep the masks — the post is left
+  # to the moderators, never published instead.
   #
   # A post the failure mode published (fail-open) keeps its entry as `auto_published`, so a
   # verdict that still arrives is carried out on the published post (`apply_late`).
@@ -72,7 +73,7 @@ module MinosModeration
 
     # Applies the failure mode to a post that will get no verdict.
     #
-    # @param reason [Symbol] `:timeout`, `:config` or `:no_text`.
+    # @param reason [Symbol] `:timeout`, `:limit`, `:config` or `:no_text`.
     # @return [void]
     def apply_failure(reason)
       Store.lock(@id) do
@@ -213,9 +214,29 @@ module MinosModeration
           log("update_fields raised #{e.class.name}")
           false
         end
-      return [instead(decision, :action_failed), {}] unless edited
+      return [instead(decision, :action_failed), {}] unless edited && stored?(reviewable, changes)
 
       [act(reviewable, :approve_post, decision), originals(raw, title)]
+    end
+
+    # Whether the queued text Discourse would publish is the masked one. `approve_post`
+    # publishes the reviewable's payload as the object holds it, so the object is read back
+    # from the database first: a save that reported success but did not keep the masks
+    # must never publish the original instead.
+    #
+    # @param reviewable [ReviewableQueuedPost] the pending post, reloaded here.
+    # @param changes [Hash{String => String}] the masked `raw` (and `title`).
+    # @return [Boolean] whether every masked field is stored exactly.
+    def stored?(reviewable, changes)
+      reviewable.reload
+      payload = reviewable.payload || {}
+      return true if changes.all? { |field, value| payload[field] == value }
+
+      log("the masked text did not persist")
+      false
+    rescue ::ActiveRecord::ActiveRecordError => e
+      log("reading the masked post back raised #{e.class.name}")
+      false
     end
 
     # A verdict for a post the failure mode already published. A person's decision since
@@ -293,7 +314,7 @@ module MinosModeration
       raw = payload["raw"].to_s
       title = payload["title"]
       masked = reviewable && masks_for(raw, title, verdict)
-      return [hide(post, instead(decision, :mask_unmappable, action: :hide)), {}] unless masked
+      return [unmasked(post, decision, :mask_unmappable), {}] unless masked
 
       fields = {
         raw: published_form(masked[:raw]),
@@ -313,9 +334,19 @@ module MinosModeration
           log("masking the published post raised #{e.class.name}")
           false
         end
-      return [hide(post, instead(decision, :action_failed, action: :hide)), {}] unless revised
+      return [unmasked(post, decision, :action_failed), {}] unless revised
 
       [decision, originals(raw, title)]
+    end
+
+    # A published post whose masks could not be edited in: hidden, unless it carries
+    # `wsparcie`, which is never hidden automatically (`Decision.for_late_verdict`).
+    #
+    # @return [Decision::Result] what was done.
+    def unmasked(post, decision, reason)
+      return instead(decision, reason, action: :keep) if decision.support
+
+      hide(post, instead(decision, reason, action: :hide))
     end
 
     # @return [Hash{Symbol => String}, nil] the masked raw and title, or nil when the masks

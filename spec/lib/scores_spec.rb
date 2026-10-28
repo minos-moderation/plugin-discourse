@@ -235,6 +235,30 @@ RSpec.describe "MinosModeration::Scores" do
       end
     end
 
+    it "keeps a daily limit's ponow_za_s as the gateway gave it, beyond the capped pause" do
+      outcome = scores.classify(429, error("limit_dobowy_klucza", "ponow_za_s" => 36_000))
+      expect(outcome.retry_in).to eq(36_000)
+      expect(scores.backoff(1, outcome.retry_in)).to eq(900)
+    end
+
+    it "names the state a refusal for a while puts the gateway in, and no other" do
+      states =
+        %w[limit_dobowy_klucza limit_globalny_b2b kolejka_pelna limit_minutowy_klucza
+           limit_w_locie_klucza].to_h do |code|
+          [code, scores.limit_state(scores.classify(429, error(code, "ponow_za_s" => 30)))]
+        end
+      expect(states).to eq(
+        "limit_dobowy_klucza" => "daily_limit",
+        "limit_globalny_b2b" => "overloaded",
+        "kolejka_pelna" => "overloaded",
+        "limit_minutowy_klucza" => nil,
+        "limit_w_locie_klucza" => nil,
+      )
+      # Only a 429 carries a limit: the same code on another status is not one.
+      expect(scores.limit_state(scores.classify(503, error("kolejka_pelna")))).to be_nil
+      expect(scores.limit_state(scores.classify(202, "{}"))).to be_nil
+    end
+
     it "reads a refused private address as a configuration error and other failures as retries" do
       expect(scores.classify_transport("FinalDestination::SSRFDetector::DisallowedIpError").kind)
         .to eq(:config_error)

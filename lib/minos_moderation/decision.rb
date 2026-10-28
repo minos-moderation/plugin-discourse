@@ -29,9 +29,9 @@ module MinosModeration
     # (`mask_unmappable`, `topic_closed`, `action_failed`, `apply_stuck`). Each but
     # `verdict` has a text under `minos_moderation.reasons` in the locales.
     REASONS = %i[
-      verdict core_hold edited unassessed timeout config no_text truncated censored_setting
-      no_masked_text mask_unmappable blocked_setting support topic_closed action_failed
-      apply_stuck person_acted
+      verdict core_hold edited unassessed timeout limit config no_text truncated
+      censored_setting no_masked_text mask_unmappable blocked_setting support topic_closed
+      action_failed apply_stuck person_acted
     ].freeze
 
     # Seconds a finished entry is kept, to recognise a late repeated delivery.
@@ -46,6 +46,12 @@ module MinosModeration
 
     # Seconds after which a submission still marked as being sent is presumed lost.
     STALE_SENDING_S = 120
+
+    # The lowest `minos_timeout_minutes` the plugin works with. The gateway tries to deliver
+    # a verdict for 15 minutes; a shorter wait would give a post the failure mode while its
+    # verdict is still on the way. `config/settings.yml` offers nothing lower, and
+    # {timeout_s} raises a value stored before the minimum was raised.
+    MIN_TIMEOUT_MINUTES = 20
 
     # The decision about one post.
     #
@@ -101,7 +107,7 @@ module MinosModeration
     # moderators, with a note — approving it would also unsilence an auto-silenced author.
     #
     # @param settings [Hash{String => String}] as in {for_verdict}.
-    # @param reason [Symbol] `:unassessed`, `:timeout`, `:config` or `:no_text`.
+    # @param reason [Symbol] `:unassessed`, `:timeout`, `:limit`, `:config` or `:no_text`.
     # @param support [Boolean] whether a verdict set `wsparcie` anyway.
     # @param core_hold [Boolean] whether Discourse itself held the post for review.
     # @param edited [Boolean] whether the post changed in the queue after it was sent.
@@ -121,19 +127,42 @@ module MinosModeration
     # one. A person's decision since the publication stays final; otherwise the verdict
     # is carried out on the published post, as far as a published post allows: `hide`
     # takes it out of view (a moderator can show it again), `mask` edits the masked
-    # fragments in. Nothing here publishes or deletes.
+    # fragments in. Nothing here publishes or deletes. A post with `wsparcie` is never
+    # hidden: hiding is an automatic sanction, and Discourse also messages the author
+    # about it, while `wsparcie` asks for support — the post stays as it is, with the note,
+    # and a person decides (shared plugin rule 9).
     #
     # @param verdict [Hash{String => Object}] a payload read by `WebhookPayload.parse`.
     # @param settings [Hash{String => String}] as in {for_verdict}.
     # @param truncated [Boolean] whether the post was longer than the text sent for it.
     # @param acted [Boolean] whether a person acted on the published post since.
-    # @return [Result] `:keep`, `:mask` or `:hide`.
+    # @return [Result] `:keep`, `:mask` or `:hide`; never `:hide` with `wsparcie`.
     def self.for_late_verdict(verdict, settings, truncated: false, acted: false)
       verdict = {} unless verdict.is_a?(Hash)
       support = verdict["wsparcie"] == true
       return result(:keep, :person_acted, support) if acted
       return result(:keep, :unassessed, support) if verdict["status"] != "ocenione"
 
+      decision = late(verdict, settings, truncated, support)
+      return result(:keep, :support, support) if support && decision.action == :hide
+
+      decision
+    end
+
+    # The seconds without a verdict after which a post gets the failure mode.
+    #
+    # @param minutes [Integer, String, nil] `minos_timeout_minutes` as stored.
+    # @return [Integer] the minutes in seconds, never below {MIN_TIMEOUT_MINUTES}: a value
+    #   saved before the minimum was raised stays in the database, and Discourse checks
+    #   `min` only when a value is written.
+    def self.timeout_s(minutes)
+      [minutes.to_i, MIN_TIMEOUT_MINUTES].max * 60
+    end
+
+    # {for_late_verdict} for an assessed post, before the support rule.
+    #
+    # @return [Result] `:keep`, `:mask` or `:hide`.
+    def self.late(verdict, settings, truncated, support)
       case verdict["kwalifikacja"]
       when "bezpieczne"
         result(:keep, truncated ? :truncated : :verdict, support)
@@ -150,6 +179,47 @@ module MinosModeration
       else
         result(:keep, :unassessed, support)
       end
+    end
+
+    # Whether a delivered verdict is for the text the entry waits on. Each attempt has its
+    # own item id (`discourse:<review item>.<attempt>`), and only the current attempt's
+    # verdict used to count; but an earlier attempt's verdict assessed the same text when
+    # its digest equals the current attempt's, and one verdict is enough (the current
+    # attempt may even have been refused). An entry without per-attempt digests (written
+    # before them), or whose current attempt has no digest yet, takes only the current
+    # attempt: nothing unknown is taken.
+    #
+    # @param entry [Hash{String => Object}] the entry as `Store` keeps it (`attempt`,
+    #   `digests`: attempt number as a String => text digest).
+    # @param attempt [Integer] the attempt in the delivered item id.
+    # @return [Boolean] whether the verdict may be taken.
+    def self.verdict_for_entry?(entry, attempt)
+      current = entry["attempt"].to_i
+      return true if current.positive? && attempt == current
+      return false unless attempt.is_a?(Integer) && attempt.positive? && attempt < current
+
+      digests = entry["digests"]
+      return false unless digests.is_a?(Hash)
+
+      earlier = digests[attempt.to_s]
+      earlier.is_a?(String) && !earlier.empty? && earlier == digests[current.to_s]
+    end
+
+    # Whether a refusal keeps the gateway closed past the post's time-out, so that the
+    # failure mode applies at once instead of a retry that could only come too late
+    # (shared plugin rule 3(a)). The gateway's `ponow_za_s` is compared as it was given,
+    # before the cap on the plugin's own retry pause (`Scores::MAX_BACKOFF_S`): a daily
+    # limit's 36000 s would otherwise read as a retry in 15 minutes.
+    #
+    # @param entry [Hash{String => Object}] the entry as `Store` keeps it (`queued_at`).
+    # @param now [Integer] the clock, in seconds.
+    # @param timeout_s [Integer] `Settings.timeout_s`.
+    # @param retry_in [Integer, nil] the refusal's `ponow_za_s`, uncapped.
+    # @return [Boolean] true when the gateway refuses until after the post's time-out.
+    def self.refusal_outlasts_timeout?(entry, now:, timeout_s:, retry_in:)
+      return false unless retry_in.is_a?(Integer) && retry_in.positive?
+
+      now + retry_in > entry["queued_at"].to_i + timeout_s
     end
 
     # What a pending entry needs now; the sweeper's rules.
@@ -216,6 +286,6 @@ module MinosModeration
       Result.new(action: action, reason: reason, unassessed: unassessed, support: support)
     end
 
-    private_class_method :censored, :leave, :result
+    private_class_method :censored, :late, :leave, :result
   end
 end
