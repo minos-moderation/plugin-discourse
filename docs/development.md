@@ -92,8 +92,12 @@ reader can see is dropped; where removing something is not certain, more is sent
   `*`, `_`) only where its `scanDelims` lets the markers open and close (so `kur~~<i>wa~~`
   keeps its tildes: a tilde next to punctuation does not open), heading and blockquote
   markers, fence markers (an info string stays), an autolink's brackets. A link keeps
-  its text in place and its address follows the word the link ends in, so a link inside
-  a word (`Ty [ku](…)rwa`) never splits it; an image keeps its alt text and title in its
+  its text in place (a code span in it too) and its address, title and label follow the
+  word the link ends in, so a link inside a word (`Ty [ku](…)rwa`) never splits it:
+  inline (`[t](u "x")`, `[t](<u>)`), full (`[t][l]`), collapsed (`[t][]`) and shortcut
+  (`[t]`) links, a reference one only where the post defines its label (in any case; a
+  definition's address may stand on the next line), as markdown-it reads them, also
+  inside brackets that are not a link. An image keeps its alt text and title in its
   place, apart from the words around it. A lone or escaped marker (`\[`, `\&`) a reader
   sees as it is written stays, so that it never joins two words. A quote leaves the
   title Discourse shows, a details block its summary, each on a line of its own.
@@ -101,12 +105,16 @@ reader can see is dropped; where removing something is not certain, more is sent
   (closed only by a fence of at most three spaces, at the top, in a blockquote or in a
   list item, or by the end of its container), indented code (also after a thematic
   break or a setext underline, and a list marker indented four or more columns past its
-  list), HTML blocks (in a list item too), a table's header line, a link reference
-  definition (shown as nothing; sent as written). A paragraph's line indented four
+  list), HTML blocks (in a list item too), tables (a header with a pipe over a delimiter
+  row with as many cells, in the same blockquote, not on lazy lines; each cell read on
+  its own), a link reference definition (shown as nothing; sent as written). A fence or
+  an HTML block may open in a blockquote on a list item's own line (`- > ```…`); the
+  fence runs on the lines that keep both containers. A paragraph's line indented four
   columns or more continues it, whatever it starts with. A lazy line (fewer blockquote
-  markers than the paragraph it follows) keeps the blockquote open, unless it opens a
-  BBCode block, or in a nested blockquote any block: then it ends the blockquote, as
-  markdown-it's terminators do, and a list in it.
+  markers than the paragraph it follows, also the blockquote of a list item) keeps the
+  blockquote open, unless it opens a BBCode block, or in a nested blockquote any block:
+  then it ends the blockquote, as markdown-it's terminators do, and a list in it. A
+  blockquote left of a list item's content is a new one, not the item's.
 - Code is shown as it is written, so it is sent as it is written (`Text.inline_reading`):
   fenced and indented code blocks, code spans (markdown-it's backtick rule, escapes, HTML
   tags and links passed over) and `[code]…[/code]` (inline, taken in the same left to
@@ -358,9 +366,10 @@ Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 - that the Discourse-tier specs added after the first CI run pass as written.
   `text_reader_view_spec.rb` ran against `PrettyText.cook` in CI (runs 40664872308 and
   40673051491): every entry passed but one, which showed that Discourse keeps `title` on
-  `span` (the chat plugin's allow list); `span` is now a tooltip tag. The entries added
-  after that (a `div` title; the review's and the fuzz's cases of links, images, HTML
-  blocks, bare links, lazy lines and emphasis) have not run there yet;
+  `span` (the chat plugin's allow list); `span` is now a tooltip tag. Run 40680836559
+  passed all 69 entries of that time; the 24 added after it (titled and reference links,
+  fences in a quote in a list item, tables, Markdown in HTML blocks and bare links) have
+  not run there yet;
 - `PublicSuffix.domain` is called as the gem documents it (nil for an invalid name); the
   plugin sends no `link_domains` when the constant is missing;
 - the exact oldest Discourse version with every API above (`ReviewableNote` in
@@ -389,14 +398,24 @@ Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 - Configuration errors reach the admin dashboard through a problem check; on a
   Discourse without `register_problem_check` they reach only the log.
 - The reduction of `tekst` models markdown-it and Discourse's BBCode rules; it is not
-  their renderer. Checked against them (markdown-it 15 with Discourse's
-  `bbcode-block.js` and `bbcode-inline.js`) on 42 000 random posts of the review's two
-  generators, a tooltip counted apart from the words it sits in (as a reader sees it):
-  none sends a word a reader sees split or not at all, except where an attribute is
-  left open at the end of an HTML block (`<span title="a` with its closing quote on the
-  next line): the browser runs it on into the following blocks, and what that tooltip
-  then shows is not modelled (10 posts). Also not modelled: a blockquote inside a list
-  item beyond its first line; a link with a title (`[t](u "x")`), a reference link or a
-  link text with a backtick (each sent as written); markdown-it's whole balancing of
-  emphasis markers (paired left to right here). Each errs towards sending markup a
-  reader does not see.
+  their renderer. It was checked against them (markdown-it 15 with Discourse's
+  `bbcode-block.js` and `bbcode-inline.js`, the reader's words taken from an HTML5 tree,
+  a tooltip apart from the words it sits in) on 86 000 random posts of the review's
+  generators: 16 posts lose a word, all of the first limit below. The limits, each with
+  its direction ("more": the gateway gets markup or words a reader does not see, never
+  a word less; "less": a word a reader sees may reach the gateway split or not at all):
+  - **less**: an attribute left open at the end of an HTML block (`<span title="a` with
+    its closing quote on the next line) runs on, in the browser, into the following
+    blocks, and that tooltip may show text the reduction removes (a comment's, a
+    tag's). 16 of 86 000 fuzz posts, 14 of them from the generator of multi-line
+    titles;
+  - **less**: emphasis markers are paired left to right among the markers that can
+    open and close, not by markdown-it's whole balancing (its rule of three, nesting),
+    so a marker may be kept or removed inside a word where the reader sees the
+    opposite. No fuzz post found it;
+  - **less**, tooltips only: a third-party plugin that allows `title` on another tag
+    needs that tag in `Text::TOOLTIP_TAGS`;
+  - **more**: an image by reference (`![alt][1]`), a reference definition whose
+    address is not valid, a link to a label defined only that way (its words then
+    reach the gateway joined, as the link shows them, never split), and a definition's
+    lines themselves are sent as written.
