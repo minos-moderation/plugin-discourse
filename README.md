@@ -32,7 +32,11 @@ licencja GPL-2.0 (plik `LICENSE`).
    | brak werdyktu w czasie `minos_timeout_minutes` | jak `nieocenione` |
 
 5. Każda decyzja zostawia **notatkę dla moderatorów** w zgłoszeniu w kolejce przeglądu:
-   werdykt, kategorie (np. `wulgaryzmy`, `nekanie`) i to, co wtyczka zrobiła.
+   werdykt, kategorie (np. `wulgaryzmy`, `nekanie`), powód i to, co wtyczka zrobiła. Gdy
+   post z werdyktem `ocenzurowane` zostaje moderatorom (ustawienie, post dłuższy niż 3000
+   znaków, maskowania nie da się nanieść, zapis się nie udał), druga notatka pokazuje
+   tekst wysłany do oceny z fragmentami zamaskowanymi przez bramę (`█`), żeby moderator
+   widział, co brama chciała ukryć.
 
 Kilka zasad, które zawsze obowiązują:
 

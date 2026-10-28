@@ -102,7 +102,12 @@ and the verdict without its masked text, for 30 days. A table without dates
    through the reviewable: `perform(system user, :approve_post)`, `update_fields` of the
    queued `raw` (and `title`), a `reload` that must read the masks back exactly, followed
    by `:approve_post`, `:reject_post`, or nothing. A `ReviewableNote` records the
-   outcome. The entry ends `done`.
+   outcome; when an `ocenzurowane` verdict's masks did not reach the post (left by
+   `minos_censored_action`, a cut text, masks that do not map, a failed edit, or a
+   published post hidden instead), a second note shows the gateway's masked text (shared
+   plugin rule A2d): `@` made inert with U+2060, control characters removed, cut to
+   `ReviewableNote::MAX_CONTENT_LENGTH` with an ellipsis; Discourse escapes a note's HTML
+   when it renders it (`PlaintextMentions#render`). The entry ends `done`.
 5. The failure mode (`Decision.for_failure`) never publishes a post Discourse held itself
    or a moderator edited. When it publishes one (fail-open), the entry ends
    `auto_published` with the post's id, and a verdict that still arrives goes through
@@ -394,7 +399,10 @@ Verified in Discourse's source (`main`, September 2026) or in
   the object's in-memory `payload` through `create_options`), `update_fields` with a
   `payload` hash and its history entry (it assigns the payload, then returns `save`),
   `payload["raw"]` and `payload["title"]`,
-  `pending?`, `reviewable_notes` / `ReviewableNote::MAX_CONTENT_LENGTH`;
+  `pending?`, `reviewable_notes` / `ReviewableNote::MAX_CONTENT_LENGTH` (2000); a note's
+  content is plain text, rendered by `PlaintextMentions#render` (HTML-escaped, `@name`
+  linked and notified when preceded by a space, punctuation or a symbol) (`main`,
+  2026-10-28);
 - the score reason text `reviewables.reasons.<reason>` (`ReviewableScoreSerializer`);
 - `ProblemCheck` (realtime when `perform_every` is unset; `problem`, `no_problem`,
   `translation_data`, the key `dashboard.problem.<identifier>`);

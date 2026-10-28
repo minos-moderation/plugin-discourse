@@ -40,6 +40,10 @@ module MinosModeration
       ::Discourse::InvalidAccess,
     ].freeze
 
+    # Characters a note never carries from the gateway's text: controls other than a line
+    # break or a tab.
+    NOTE_CONTROLS = /[^\P{Cc}\n\t]/
+
     # @param reviewable_id [Integer] the held post's reviewable.
     def initialize(reviewable_id)
       @id = Integer(reviewable_id)
@@ -441,12 +445,40 @@ module MinosModeration
       Store.set(@id, entry.merge(finished))
     end
 
-    # Notes what was done on the review item, and the support signal.
+    # Notes what was done on the review item, the gateway's masked text when its masks did
+    # not reach the post, and the support signal.
     #
     # @return [void]
     def record(reviewable, done, verdict)
       note(reviewable, note_text(done, verdict))
+      masked = mask_note(done, verdict)
+      note(reviewable, masked) if masked
       note(reviewable, translate("minos_moderation.notes.support")) if done.support
+    end
+
+    # The masked text for the moderators (shared plugin rule A2d): when an `ocenzurowane`
+    # verdict's masks were not carried onto the post (left to the moderators by the
+    # setting, a cut text, masks that do not map, an action that failed; a published post
+    # hidden instead), the note shows what the gateway would have masked. It is the sent
+    # text with `█` in place of the masked fragments: nothing that did not leave the forum
+    # already. Discourse escapes a note's HTML when it shows it; an `@name` in it is made
+    # inert with a word joiner (U+2060) before the `@`, so the note mentions nobody;
+    # control characters go; a text over the note's limit is cut, with an ellipsis.
+    #
+    # @return [String, nil] the note, or nil when there is no mask to show.
+    def mask_note(done, verdict)
+      return nil unless verdict.is_a?(Hash) && verdict["status"] == "ocenione"
+      return nil unless verdict["kwalifikacja"] == "ocenzurowane"
+      return nil if %i[approve_masked mask].include?(done.action)
+
+      masked = verdict["ocenzurowany"]
+      return nil unless masked.is_a?(String) && !masked.empty?
+
+      shown = masked.gsub(NOTE_CONTROLS, "").gsub("@", "\u2060@")
+      limit = defined?(::ReviewableNote) ? ::ReviewableNote::MAX_CONTENT_LENGTH : 2000
+      room = limit - translate("minos_moderation.notes.masked", tekst: "").length
+      shown = "#{shown[0, [room - 1, 0].max]}…" if shown.length > room
+      translate("minos_moderation.notes.masked", tekst: shown)
     end
 
     # The moderators' note about what was done, in the forum's default language.

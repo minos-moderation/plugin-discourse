@@ -183,6 +183,76 @@ RSpec.describe Jobs::MinosApplyVerdict do
     end
   end
 
+  describe "the gateway's masks shown to the moderators (shared plugin rule A2d)" do
+    let(:masked) { sent[:text].sub("world", mask * 5) }
+
+    def censored(extra = {})
+      assessed("ocenzurowane", { "kategorie" => ["wulgaryzmy"], "ocenzurowany" => masked }.merge(extra))
+    end
+
+    def mask_notes
+      notes.select { |content| content.include?(mask * 5) }
+    end
+
+    it "notes the masked text when the setting leaves a censored post to the moderators" do
+      SiteSetting.minos_censored_action = "zostaw_moderatorom"
+      apply_verdict(censored)
+      expect(reviewable).to be_pending
+      expect(entry["reason"]).to eq("censored_setting")
+      expect(mask_notes.size).to eq(1)
+      expect(mask_notes.first).to include(masked)
+    end
+
+    it "notes it when only the beginning of the post was assessed" do
+      apply_verdict(censored, { "truncated" => true })
+      expect(reviewable).to be_pending
+      expect(entry["reason"]).to eq("truncated")
+      expect(mask_notes).to contain_exactly(include(masked))
+    end
+
+    it "notes it when the masks do not map onto the post" do
+      unmappable = "#{mask * 5}#{sent[:text][5..]}X"
+      apply_verdict(censored("ocenzurowany" => unmappable))
+      expect(entry["reason"]).to eq("mask_unmappable")
+      expect(mask_notes).to contain_exactly(include(unmappable))
+    end
+
+    it "notes it when the masked text could not be stored" do
+      allow_any_instance_of(ReviewableQueuedPost).to receive(:update_fields).and_raise(
+        Reviewable::UpdateConflict,
+      )
+      apply_verdict(censored)
+      expect(entry["reason"]).to eq("action_failed")
+      expect(mask_notes).to contain_exactly(include(masked))
+    end
+
+    it "notes no mask when the masks reached the post" do
+      apply_verdict(censored)
+      expect(reviewable).to be_approved
+      expect(mask_notes).to be_empty
+    end
+
+    it "mentions nobody, keeps HTML as text and carries neither key nor secret" do
+      SiteSetting.minos_api_key = "wgb2b_klucz_testowy_0000000000000000"
+      SiteSetting.minos_webhook_secret = "sekret-testowy"
+      moderator = Fabricate(:moderator, username: "moderator_a")
+      SiteSetting.minos_censored_action = "zostaw_moderatorom"
+      apply_verdict(censored("ocenzurowany" => "<b>x</b> @moderator_a #{mask * 5}"))
+
+      note = reviewable.reviewable_notes.find { |item| item.content.include?(mask * 5) }
+      expect(note).to be_present
+      mentioned = Notification.where(user: moderator, notification_type: Notification.types[:mentioned])
+      expect(mentioned.count).to eq(0)
+      cooked = PlaintextMentions.new(note.content).render
+      expect(cooked).not_to include("<b>")
+      expect(cooked).not_to include("mention")
+      reviewable.reviewable_notes.each do |item|
+        expect(item.content).not_to include(SiteSetting.minos_api_key)
+        expect(item.content).not_to include(SiteSetting.minos_webhook_secret)
+      end
+    end
+  end
+
   describe "zablokowane" do
     it "leaves the post by default" do
       apply_verdict(assessed("zablokowane", "kategorie" => ["nekanie"]))
