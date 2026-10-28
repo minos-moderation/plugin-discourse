@@ -132,21 +132,26 @@ module MinosModeration
       nil
     end
 
-    # Reads the gateway's answer to one request.
+    # Reads the gateway's answer to one request (shared plugin rules F5a and F5b).
+    #
+    # Only `202` accepts a request. Any other `2xx` accepted nothing, so the post is sent
+    # again after a backoff, like a `5xx`: it is never read as a configuration error, which
+    # would give the post the failure mode for an answer that says nothing about the
+    # forum's configuration. `408` is a network failure.
     #
     # @param status [Integer] the HTTP status.
     # @param body [String, nil] the answer's body.
-    # @return [Outcome] `:accepted` for `202`; `:retry` for `429`, `503`, `408` and other
-    #   `5xx`, with `ponow_za_s` when the gateway sent one; `:config_error` for every other
-    #   status (another `4xx`, a redirect, an unexpected success). `code` is the gateway's
-    #   `blad.kod` when it has the contract's shape, and nil otherwise.
+    # @return [Outcome] `:accepted` for `202`; `:retry` for `429`, any `5xx`, `408` and any
+    #   other `2xx`, with `ponow_za_s` when the gateway sent one; `:config_error` for every
+    #   other status (another `4xx`, a redirect). `code` is the gateway's `blad.kod` when it
+    #   has the contract's shape, and nil otherwise.
     def self.classify(status, body)
       status = status.to_i
       error = error_of(body)
       code = error["kod"].is_a?(String) && CODE.match?(error["kod"]) ? error["kod"] : nil
       return Outcome.new(kind: :accepted, http: status) if status == 202
 
-      if status == 429 || status == 408 || (500..599).cover?(status)
+      if status == 429 || status == 408 || (500..599).cover?(status) || (200..299).cover?(status)
         return Outcome.new(kind: :retry, http: status, code: code, retry_in: retry_in(error))
       end
 

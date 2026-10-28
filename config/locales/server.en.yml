@@ -7,18 +7,40 @@ en:
     minos_gateway_url: "Adres bramy Wergiliusz. Wymagany https; zwykłe http działa tylko z bramą testową na tym samym komputerze (localhost)."
     minos_api_key: "Klucz API forum (nagłówek X-Gateway-Key, zaczyna się od wgb2b_), wydany przez operatora bramy. Wtyczka nie zapisuje go w logach ani nie pokazuje na stronach."
     minos_webhook_secret: "Sekret webhooka, wydrukowany raz przy wydaniu klucza. Służy do sprawdzania podpisu każdej dostawy na adres https://ADRES-TWOJEGO-FORUM%{base_path}/minos/webhook — bez niego żaden werdykt nie zostanie przyjęty."
-    minos_profile: "Profil oceny: forum_adult (forum dla dorosłych) albo forum_teen (forum dla nastolatków). Profil musi być na liście profili klucza."
+    minos_profile: "Profil oceny: forum_adult (forum dla dorosłych) albo forum_teen (forum dla dzieci i młodzieży). Profil musi być na liście profili klucza."
     minos_failure_mode: "Co zrobić z postem, którego brama nie oceniła (odpowiedź nieocenione, brak werdyktu w wyznaczonym czasie, błąd konfiguracji): fail-open — opublikować bez oceny; fail-closed — zostawić moderatorom w kolejce do przeglądu."
     minos_timeout_minutes: "Po ilu minutach bez werdyktu post jest traktowany jak nieoceniony (według ustawienia minos_failure_mode). Najmniej 20: brama próbuje doręczyć werdykt przez 15 minut, a wtyczka zostawia margines; mniejsza wartość zapisana wcześniej działa jak 20."
     minos_censored_action: "Werdykt „ocenzurowane”: publikuj_ocenzurowany — opublikować post z zamaskowanymi fragmentami (█); zostaw_moderatorom — zostawić go w kolejce do przeglądu."
     minos_blocked_action: "Werdykt „zablokowane”: zostaw_moderatorom — zostawić post w kolejce do przeglądu; odrzuc — odrzucić go."
     minos_skip_staff: "Posty moderatorów i administratorów publikuj od razu, bez wysyłania do oceny."
+    minos_categories: "Kategorie, w których wtyczka wstrzymuje nowe posty i wysyła je do oceny (także w ich podkategoriach). Puste — wszystkie kategorie. Post spoza wybranych kategorii nie jest oceniany wcale: Discourse publikuje go albo wstrzymuje według własnych reguł."
+    minos_exempt_groups: "Grupy, których członków wtyczka nie moderuje: ich nowe posty nie są wstrzymywane ani oceniane (Discourse stosuje do nich własne reguły). Puste — żadna grupa."
+    minos_max_trust_level: "Najwyższy poziom zaufania autora, którego posty wtyczka wstrzymuje i wysyła do oceny. 4 — wszyscy autorzy (domyślnie); np. 1 — tylko nowi i podstawowi użytkownicy. Posty autorów z wyższym poziomem nie są oceniane wcale."
   reviewables:
     reasons:
       minos_pending: "Czeka na ocenę Minos — moderacja postów."
   dashboard:
     problem:
       minos_gateway_problem: "Minos — moderacja postów: %{szczegoly}. Do czasu naprawy posty są traktowane zgodnie z ustawieniem minos_failure_mode. <a href='%{base_path}/admin/site_settings/category/plugins?filter=minos'>Ustawienia wtyczki</a>"
+  reports:
+    minos_moderation:
+      title: "Minos — czas do werdyktu i werdykty"
+      description: "Z ostatnich 7 dni: ile czasu mija od przyjęcia posta przez bramę do doręczenia werdyktu (mediana i 95. percentyl) oraz ile postów dostało każdy werdykt. Liczone z czasów, które wtyczka i tak zapisuje — bez treści postów i bez dodatkowych zapytań do bramy."
+      labels:
+        measure: "Miara"
+        value: "Wartość"
+      rows:
+        p50: "Czas od wysłania do werdyktu — mediana (P50)"
+        p95: "Czas od wysłania do werdyktu — 95. percentyl (P95)"
+        timed: "Posty, dla których zmierzono czas"
+        bezpieczne: "Werdykt „bezpieczne”"
+        ocenzurowane: "Werdykt „ocenzurowane”"
+        zablokowane: "Werdykt „zablokowane”"
+        nieocenione: "Werdykt „nieocenione”"
+        no_verdict: "Bez werdyktu (tryb awarii po upływie czasu, odmowie bramy albo błędzie konfiguracji)"
+      seconds: "%{sekundy} s"
+      minutes: "%{minuty} min %{sekundy} s"
+      no_data: "brak danych"
   minos_moderation:
     edit_reason: "Minos: zamaskowano fragmenty"
     notes:
@@ -26,7 +48,10 @@ en:
       no_categories: "brak"
       no_verdict: "Minos: brak werdyktu."
       reason: "Powód: %{powod}."
+      masked: "Minos: tak brama zamaskowała tekst wysłany do oceny (█ w miejscu ocenzurowanych fragmentów): %{tekst}"
       support: "Minos: treść może świadczyć o tym, że autor jest w kryzysie (samookaleczenie). To sygnał, by okazać mu wsparcie, a nie by go karać."
+    flags:
+      support: "Minos: brama oznaczyła ten opublikowany post sygnałem „wsparcie” — jego treść może świadczyć o tym, że autor jest w kryzysie (samookaleczenie). Wtyczka nie ukrywa ani nie usuwa takiego posta i nie pisze do autora; o tym, czy i jak mu pomóc, decyduje moderator."
     actions:
       approve: "Post opublikowano."
       approve_unassessed: "Post opublikowano bez pełnej oceny, zgodnie z ustawieniem fail-open."
@@ -35,7 +60,7 @@ en:
       reject: "Post odrzucono."
       leave: "Post czeka na decyzję moderatora."
       keep: "Opublikowany wcześniej post zostaje bez zmian."
-      mask: "W opublikowanym wcześniej poście zamaskowano fragmenty; oryginalna treść jest w historii edycji posta."
+      mask: "W opublikowanym wcześniej poście zamaskowano fragmenty; oryginalna treść jest w ukrytej wersji w historii edycji posta, widocznej tylko dla zespołu forum."
       hide: "Opublikowany wcześniej post ukryto; moderator może go przywrócić."
     reasons:
       core_hold: "forum samo wymaga zatwierdzenia tego posta, więc werdykt jest tylko podpowiedzią"

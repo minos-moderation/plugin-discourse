@@ -17,9 +17,16 @@ module MinosModeration
   # A post the failure mode published (fail-open) keeps its entry as `auto_published`, so a
   # verdict that still arrives is carried out on the published post (`apply_late`).
   #
-  # The unmasked text is never copied into the plugin's store: the reviewable's history has
-  # it, and for a `dane_osobowe` mask it is exactly the personal data the mask removed. The
-  # entry keeps its digest only.
+  # `wsparcie` (shared plugin rule A7) is an active signal for the moderators whatever the
+  # verdict: a post still held is in their review queue already, with the note; a post
+  # that is published gets a `notify_moderators` flag from the system user, a new item in
+  # the same queue. Nothing about it ever goes to the author, and such a post is never
+  # rejected or hidden automatically (`Decision`).
+  #
+  # The unmasked text is never copied into the plugin's store: the reviewable's history (a
+  # post masked in the queue) or a hidden revision of the post (a post masked after a
+  # fail-open publication) has it, for staff only; for a `dane_osobowe` mask it is exactly
+  # the personal data the mask removed. The entry keeps its digest only.
   #
   # Callers must not hold `Store.lock` for the same post: every public method takes it.
   class VerdictApplier
@@ -33,6 +40,10 @@ module MinosModeration
       ::ActiveRecord::ActiveRecordError,
       ::Discourse::InvalidAccess,
     ].freeze
+
+    # Characters a note never carries from the gateway's text: controls other than a line
+    # break or a tab.
+    NOTE_CONTROLS = /[^\P{Cc}\n\t]/
 
     # @param reviewable_id [Integer] the held post's reviewable.
     def initialize(reviewable_id)
@@ -116,6 +127,7 @@ module MinosModeration
           )
         reviewable = ::ReviewableQueuedPost.find_by(id: @id)
         record(reviewable, done, verdict) if reviewable
+        signal_support(published_post(entry["post_id"])) if done.support && done.action == :keep
         finished = entry.merge("verdict" => stored(verdict), "reason" => "apply_stuck")
         close(finished, done.action.to_s)
       end
@@ -161,6 +173,9 @@ module MinosModeration
     def execute(reviewable, entry, decision, verdict)
       done, extra = carry_out(reviewable, decision, verdict)
       record(reviewable, done, verdict)
+      if done.support && %i[approve approve_masked].include?(done.action)
+        signal_support(published_post(reviewable.target_id))
+      end
       finished =
         entry.merge(extra).merge(
           "verdict" => verdict && stored(verdict),
@@ -263,10 +278,40 @@ module MinosModeration
           [decision, {}]
         end
       record(reviewable, done, verdict) if reviewable
+      signal_support(post) if done.support
       close(
         entry.merge(extra).merge("verdict" => stored(verdict), "reason" => done.reason.to_s),
         done.action.to_s,
       )
+    end
+
+    # @param post_id [Integer, nil] a post the plugin published.
+    # @return [Post, nil] it, while it exists.
+    def published_post(post_id)
+      post_id && ::Post.find_by(id: post_id)
+    end
+
+    # Puts the support signal in the moderators' own queue (shared plugin rule A7): a
+    # `notify_moderators` flag by the system user on a published post, with a Polish
+    # message that names no content. Discourse sends that message to the moderators'
+    # group, never to the author. A post already deleted or hidden is a person's decision
+    # and gets none; a flag Discourse refuses leaves the note alone.
+    #
+    # @param post [Post, nil] the published post.
+    # @return [void]
+    def signal_support(post)
+      return if post.nil? || post.deleted_at || post.hidden?
+
+      result =
+        ::PostActionCreator.create(
+          ::Discourse.system_user,
+          post,
+          :notify_moderators,
+          message: translate("minos_moderation.flags.support"),
+        )
+      log("the support flag was not raised") unless result.success?
+    rescue *ACTION_ERRORS, ::RateLimiter::LimitExceeded => e
+      log("raising the support flag raised #{e.class.name}")
     end
 
     # @param post [Post] a post the failure mode published.
@@ -308,6 +353,12 @@ module MinosModeration
 
     # Edits the masks into a published post; hides it when that cannot be done exactly.
     #
+    # The edit is a hidden revision (`hidden: true`): the revision keeps the unmasked text,
+    # and Discourse shows a hidden revision to staff only, also where the forum makes edit
+    # histories public (`edit_history_visible_to_public`). So the moderators keep the
+    # original and no reader can open it. A Discourse that would ignore the option gets
+    # the revision hidden right after, as staff's "hide revision" does.
+    #
     # @return [Array(Decision::Result, Hash)] what was done, and fields for the entry.
     def mask(post, reviewable, decision, verdict)
       payload = reviewable ? reviewable.payload : {}
@@ -329,6 +380,7 @@ module MinosModeration
             skip_validations: true,
             bypass_bump: true,
             bypass_rate_limiter: true,
+            hidden: true,
           )
         rescue *ACTION_ERRORS => e
           log("masking the published post raised #{e.class.name}")
@@ -336,7 +388,24 @@ module MinosModeration
         end
       return [unmasked(post, decision, :action_failed), {}] unless revised
 
+      hide_original(post)
       [decision, originals(raw, title)]
+    end
+
+    # Makes sure the revision that holds a masked post's original is hidden from everyone
+    # but staff.
+    #
+    # @param post [Post] the post just masked.
+    # @return [void]
+    def hide_original(post)
+      post.reload
+      revision = ::PostRevision.find_by(post_id: post.id, number: post.version)
+      return if revision.nil? || revision.hidden
+
+      revision.hide!
+      post.update_columns(public_version: [post.public_version.to_i - 1, 1].max)
+    rescue ::ActiveRecord::ActiveRecordError => e
+      log("hiding the masked post's revision raised #{e.class.name}")
     end
 
     # A published post whose masks could not be edited in: hidden, unless it carries
@@ -401,12 +470,40 @@ module MinosModeration
       Store.set(@id, entry.merge(finished))
     end
 
-    # Notes what was done on the review item, and the support signal.
+    # Notes what was done on the review item, the gateway's masked text when its masks did
+    # not reach the post, and the support signal.
     #
     # @return [void]
     def record(reviewable, done, verdict)
       note(reviewable, note_text(done, verdict))
+      masked = mask_note(done, verdict)
+      note(reviewable, masked) if masked
       note(reviewable, translate("minos_moderation.notes.support")) if done.support
+    end
+
+    # The masked text for the moderators (shared plugin rule A2d): when an `ocenzurowane`
+    # verdict's masks were not carried onto the post (left to the moderators by the
+    # setting, a cut text, masks that do not map, an action that failed; a published post
+    # hidden instead), the note shows what the gateway would have masked. It is the sent
+    # text with `█` in place of the masked fragments: nothing that did not leave the forum
+    # already. Discourse escapes a note's HTML when it shows it; an `@name` in it is made
+    # inert with a word joiner (U+2060) before the `@`, so the note mentions nobody;
+    # control characters go; a text over the note's limit is cut, with an ellipsis.
+    #
+    # @return [String, nil] the note, or nil when there is no mask to show.
+    def mask_note(done, verdict)
+      return nil unless verdict.is_a?(Hash) && verdict["status"] == "ocenione"
+      return nil unless verdict["kwalifikacja"] == "ocenzurowane"
+      return nil if %i[approve_masked mask].include?(done.action)
+
+      masked = verdict["ocenzurowany"]
+      return nil unless masked.is_a?(String) && !masked.empty?
+
+      shown = masked.gsub(NOTE_CONTROLS, "").gsub("@", "\u2060@")
+      limit = defined?(::ReviewableNote) ? ::ReviewableNote::MAX_CONTENT_LENGTH : 2000
+      room = limit - translate("minos_moderation.notes.masked", tekst: "").length
+      shown = "#{shown[0, [room - 1, 0].max]}…" if shown.length > room
+      translate("minos_moderation.notes.masked", tekst: shown)
     end
 
     # The moderators' note about what was done, in the forum's default language.

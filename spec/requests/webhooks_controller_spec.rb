@@ -170,6 +170,36 @@ RSpec.describe MinosModeration::WebhooksController do
     expect(status).to eq("received")
   end
 
+  describe "a late verdict for a post the failure mode held after its time-out" do
+    before do
+      entry = MinosModeration::Store.get(reviewable.id)
+      MinosModeration::Store.set(
+        reviewable.id,
+        entry.merge(
+          "status" => "done",
+          "outcome" => "leave",
+          "reason" => "timeout",
+          "handled_at" => Time.now.to_i,
+        ),
+      )
+    end
+
+    it "is taken while no one has decided on the post" do
+      expect_enqueued_with(job: :minos_apply_verdict, args: { reviewable_id: reviewable.id }) do
+        deliver(JSON.generate(verdict))
+      end
+      expect(response.status).to eq(200)
+      expect(status).to eq("received")
+    end
+
+    it "is dropped with 200 once a moderator decided" do
+      reviewable.perform(Discourse.system_user, :approve_post)
+      expect_not_enqueued_with(job: :minos_apply_verdict) { deliver(JSON.generate(verdict)) }
+      expect(response.status).to eq(200)
+      expect(status).to eq("done")
+    end
+  end
+
   it "drops an id that is not a pending post of this forum, with 200" do
     ["k-1", "discourse:999999999.1", "discourse:0.1"].each do |id|
       expect_not_enqueued_with(job: :minos_apply_verdict) do
@@ -183,6 +213,29 @@ RSpec.describe MinosModeration::WebhooksController do
     SiteSetting.login_required = true
     deliver(JSON.generate(verdict))
     expect(response.status).to eq(200)
+  end
+
+  describe "while the forum is read-only" do
+    after { Discourse.disable_readonly_mode }
+
+    # The gateway counts any 2xx as delivered and keeps no verdict, so a delivery the forum
+    # cannot store must never get one: Discourse's own read-only filter answers 503 to a
+    # POST, the delivery is retried, and nothing changes meanwhile.
+    it "refuses a delivery with 503, which the gateway retries, and stores nothing" do
+      Discourse.enable_readonly_mode
+      expect_not_enqueued_with(job: :minos_apply_verdict) { deliver(JSON.generate(verdict)) }
+      expect(response.status).to eq(503)
+      expect(status).to eq("submitted")
+    end
+
+    it "takes the same delivery once the forum can write again" do
+      Discourse.enable_readonly_mode
+      deliver(JSON.generate(verdict))
+      Discourse.disable_readonly_mode
+      deliver(JSON.generate(verdict))
+      expect(response.status).to eq(200)
+      expect(status).to eq("received")
+    end
   end
 
   it "does not answer while the plugin is disabled" do

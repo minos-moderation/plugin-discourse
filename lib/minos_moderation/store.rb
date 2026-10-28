@@ -22,7 +22,9 @@ module MinosModeration
   # Plus, for the admin dashboard, `problem` (the gateway's last refusal of the forum's
   # configuration) and `limit` (the gateway's last "not before T": a daily limit or an
   # overload). Kept apart, so that neither hides the other; the gateway's next `202`
-  # clears both. Every read-modify-write of an entry happens under {lock}.
+  # clears both. And `pause`, the shared "send nothing before T" after any refusal to be
+  # retried (`Decision.pause_until`), which the next `202` clears too. Every
+  # read-modify-write of an entry happens under {lock}.
   module Store
     # The prefix of an entry's key.
     PREFIX = "pending:"
@@ -32,6 +34,9 @@ module MinosModeration
 
     # The key of the last refusal for a while (`Scores::LIMITS`).
     LIMIT = "limit"
+
+    # The key of the shared pause: no post is sent before its `until`.
+    PAUSE = "pause"
 
     # @param id [Integer] a reviewable's id.
     # @return [Hash{String => Object}, nil] its entry.
@@ -143,13 +148,56 @@ module MinosModeration
       )
     end
 
-    # Forgets the last configuration problem and the last refusal for a while: the gateway
-    # accepted a request.
+    # @return [Hash{String => Object}, nil] the shared pause: `until` (epoch seconds before
+    #   which no post is sent), `gateway` (whether `until` is the gateway's own
+    #   `ponow_za_s`), `http`, `kod`, `at`.
+    def self.pause
+      value = ::PluginStore.get(PLUGIN_NAME, PAUSE)
+      value.is_a?(Hash) ? value.to_h : nil
+    end
+
+    # Records the shared pause. A pause still in force is never shortened: a short refusal
+    # of a request that was already on its way does not lift a daily limit.
+    #
+    # @param until_at [Integer] epoch seconds (`Decision.pause_until`).
+    # @param gateway [Boolean] whether `until_at` comes from the gateway's `ponow_za_s`.
+    # @param http [Integer, nil] the gateway's status (nil without an answer).
+    # @param code [String, nil] the gateway's `blad.kod`, already checked for its shape.
+    # @return [void]
+    def self.record_pause(until_at:, gateway:, http:, code:)
+      current = pause
+      return if current && current["until"].is_a?(Integer) && current["until"] > until_at
+
+      ::PluginStore.set(
+        PLUGIN_NAME,
+        PAUSE,
+        {
+          "until" => Integer(until_at),
+          "gateway" => gateway == true,
+          "http" => http,
+          "kod" => code,
+          "at" => Time.now.to_i,
+        },
+      )
+    end
+
+    # Forgets the shared pause and the last refusal for a while: they came for a key or a
+    # gateway address the administrator has just changed (`plugin.rb`).
+    #
+    # @return [void]
+    def self.forget_refusals
+      ::PluginStore.remove(PLUGIN_NAME, PAUSE) if pause
+      ::PluginStore.remove(PLUGIN_NAME, LIMIT) if limit
+    end
+
+    # Forgets the last configuration problem, the last refusal for a while and the shared
+    # pause: the gateway accepted a request.
     #
     # @return [void]
     def self.clear_problem
       ::PluginStore.remove(PLUGIN_NAME, PROBLEM) if problem
       ::PluginStore.remove(PLUGIN_NAME, LIMIT) if limit
+      ::PluginStore.remove(PLUGIN_NAME, PAUSE) if pause
     end
 
     # @param id [Integer] a reviewable's id.

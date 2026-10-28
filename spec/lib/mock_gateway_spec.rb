@@ -173,6 +173,31 @@ RSpec.describe "The plugin against the mock gateway" do
     expect(masked[:raw]).to eq(cases[3].sub("fragmentem", "█" * "fragmentem".length))
   end
 
+  it "never carries a post with no text of its own, and takes the controls (F7)" do
+    path = File.expand_path("../fixtures/no_text.json", __dir__)
+    corpus = JSON.parse(File.read(path, encoding: "UTF-8"))
+    expect(corpus.count { |entry| entry["sends"] == false }).to be >= 9
+    corpus.each_with_index do |entry, index|
+      if entry["sends"]
+        outcome, text = submit(60 + index, entry["raw"])
+        expect(outcome.kind).to eq(:accepted), entry["name"]
+        entry["words"].each { |word| expect(text).to include(word) }
+      else
+        text = MinosModeration::Text.for_submission(entry["raw"], "Tytuł tematu")[:text]
+        expect(text).to eq(""), entry["name"]
+        # Not even a request could carry it: an empty item would refuse the whole batch.
+        expect do
+          MinosModeration::Scores.request_body(
+            item_id: MinosModeration::Scores.item_id(60 + index, 1),
+            text: text,
+            profile: "forum_adult",
+            meta: { "links" => 0, "author_first_post" => true },
+          )
+        end.to raise_error(ArgumentError)
+      end
+    end
+  end
+
   it "refuses deliveries signed wrongly or too long ago" do
     submit(20, "Tekst [minos:zly-podpis]")
     submit(21, "Tekst [minos:stary-podpis]")

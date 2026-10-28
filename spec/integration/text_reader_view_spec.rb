@@ -55,6 +55,45 @@ RSpec.describe "The text sent for a post, against Discourse's own rendering" do
     )
   end
 
+  # The post's own words in cooked HTML: text nodes only, without the alt texts, titles
+  # and tooltips that are sent only next to other words (shared plugin rule F7).
+  def own_words(html)
+    fragment = Nokogiri::HTML5.fragment(html)
+    fragment.css(chrome).each(&:remove)
+    words(fragment.xpath(".//text()").map(&:text).join(" "))
+  end
+
+  no_text =
+    JSON.parse(
+      File.read(File.expand_path("../fixtures/no_text.json", __dir__), encoding: "UTF-8"),
+    )
+
+  # Videos and attachments are drawn by Discourse with its own words (a player, a file
+  # name and size), and `words` counts a lone combining mark as a letter, so only images,
+  # links and invisible characters are checked here; the standalone tier checks them all.
+  no_text
+    .select { |entry| entry["sends"] == false && %w[image link invisible].include?(entry["kind"]) }
+    .each do |entry|
+      it "shows a reader no words of the post's own, and sends nothing: #{entry["name"]}" do
+        cooked = PrettyText.cook(entry["raw"])
+        expect(own_words(cooked)).to eq([]), "Discourse shows #{cooked.inspect}"
+        expect(MinosModeration::Text.for_submission(entry["raw"])[:text]).to eq("")
+      end
+    end
+
+  no_text
+    .select { |entry| entry["sends"] == true }
+    .each do |entry|
+      it "sends every word a reader sees of a post with text: #{entry["name"]}" do
+        cooked = PrettyText.cook(entry["raw"])
+        seen = words(reader_view(cooked))
+        expect(seen).not_to be_empty, "nothing visible in #{cooked.inspect}"
+        sent = MinosModeration::Text.for_submission(entry["raw"])[:text]
+        expect(seen - words(sent)).to eq([]),
+        "Discourse shows #{cooked.inspect}; the plugin sends #{sent.inspect}"
+      end
+    end
+
   it "has the corpus the audit named, and more" do
     expect(corpus.size).to be >= 14
   end

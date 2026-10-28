@@ -46,3 +46,14 @@ plugins:
       - odrzuc
   minos_skip_staff:
     default: true
+  # The scope (Decision.in_scope?): which new posts the plugin holds and sends. The
+  # defaults keep every post in scope, so a forum that upgrades stays moderated.
+  minos_categories:
+    type: category_list
+    default: ""
+  minos_exempt_groups:
+    type: group_list
+    default: ""
+  minos_max_trust_level:
+    default: 4
+    enum: "TrustLevelSetting"

@@ -9,6 +9,11 @@ module ::MinosModeration
   # drop an id that is not a pending post of this forum, or was already handled (delivery
   # is at least once); answer 200 at once and apply the verdict in a job.
   #
+  # A `2xx` goes only to a delivery that was stored or deliberately dropped: the gateway
+  # takes any `2xx` as delivered and keeps no copy. While the forum is read-only,
+  # Discourse's own `block_if_readonly_mode` answers 503 before this action runs, so the
+  # gateway retries; a disabled plugin answers 404 (`requires_plugin`).
+  #
   # The gateway is not a browser session: no CSRF token, no XHR header, no login.
   class WebhooksController < ::ApplicationController
     requires_plugin PLUGIN_NAME

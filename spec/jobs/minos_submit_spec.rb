@@ -86,7 +86,9 @@ RSpec.describe Jobs::MinosSubmit do
       { status: 503, body: { "blad" => { "kod" => "kolejka_niedostepna" } }.to_json }
     end
     run_job
-    MinosModeration::Store.set(reviewable.id, entry.merge("retry_at" => now))
+    # After the pause the refusal set for every post (shared plugin rule F5a).
+    freeze_time(2.minutes.from_now)
+    MinosModeration::Store.set(reviewable.id, entry.merge("retry_at" => Time.now.to_i))
     run_job
     expect(ids).to eq(["discourse:#{reviewable.id}.1", "discourse:#{reviewable.id}.2"])
     expect(entry["attempt"]).to eq(2)
@@ -173,15 +175,139 @@ RSpec.describe Jobs::MinosSubmit do
       expect(MinosModeration::Store.problem).to be_nil
     end
 
-    it "forgets the limit once the gateway accepts a post again" do
+    it "sends nothing more until the limit ends, then forgets it once the gateway accepts" do
       run_job
+      freeze_time(36_001.seconds.from_now)
+      later = Time.now.to_i
       MinosModeration::Store.set(
         reviewable.id,
-        { "status" => "queued", "queued_at" => now, "retry_at" => now, "attempts" => 0 },
+        { "status" => "queued", "queued_at" => later, "retry_at" => later, "attempts" => 0 },
       )
-      answer(202)
+      accepting = answer(202)
       run_job
+      expect(accepting).to have_been_requested.once
       expect(MinosModeration::Store.limit).to be_nil
+      expect(MinosModeration::Store.pause).to be_nil
+    end
+  end
+
+  it "retries a success other than 202 after a backoff, never as a configuration error" do
+    answer(200)
+    freeze_time
+    run_job
+    expect(entry).to include("status" => "queued", "retry_at" => Time.now.to_i + 60)
+    expect(reviewable.reload).to be_pending
+    expect(MinosModeration::Store.problem).to be_nil
+  end
+
+  describe "the pause every post shares after a refusal (shared plugin rule F5a)" do
+    fab!(:second) { Fabricate(:reviewable_queued_post) }
+    fab!(:third) { Fabricate(:reviewable_queued_post) }
+
+    before do
+      [second, third].each do |queued|
+        MinosModeration::Store.set(
+          queued.id,
+          {
+            "status" => "queued",
+            "queued_at" => now,
+            "retry_at" => now,
+            "attempts" => 0,
+            "core_hold" => nil,
+          },
+        )
+      end
+      freeze_time
+    end
+
+    def run_for(queued)
+      described_class.new.execute(reviewable_id: queued.id)
+    end
+
+    def entry_of(queued)
+      MinosModeration::Store.get(queued.id)
+    end
+
+    it "makes one request for three posts after a full queue, and defers the others to its end" do
+      stub = answer(429, { "kod" => "kolejka_pelna", "komunikat" => "x", "ponow_za_s" => 30 })
+      run_job
+      expect_enqueued_with(
+        job: :minos_submit,
+        args: { reviewable_id: second.id },
+        at: 30.seconds.from_now,
+      ) { run_for(second) }
+      run_for(third)
+
+      expect(stub).to have_been_requested.once
+      [second, third].each do |queued|
+        expect(entry_of(queued)).to include(
+          "status" => "queued",
+          "retry_at" => Time.now.to_i + 30,
+          "attempts" => 0,
+        )
+      end
+    end
+
+    it "gives the next posts the failure mode at once after a daily limit, without a request" do
+      stub =
+        answer(429, { "kod" => "limit_dobowy_klucza", "komunikat" => "x", "ponow_za_s" => 36_000 })
+      [reviewable, second, third].each { |queued| run_for(queued) }
+
+      expect(stub).to have_been_requested.once
+      [reviewable, second, third].each do |queued|
+        expect(entry_of(queued)).to include("status" => "done", "reason" => "limit")
+        expect(queued.reload).to be_pending
+      end
+    end
+
+    it "pauses after an unavailable queue" do
+      stub = answer(503, { "kod" => "kolejka_niedostepna", "komunikat" => "x" })
+      [reviewable, second, third].each { |queued| run_for(queued) }
+      expect(stub).to have_been_requested.once
+      expect(entry_of(third)).to include("status" => "queued", "retry_at" => Time.now.to_i + 60)
+    end
+
+    it "pauses after a network failure" do
+      stub = stub_request(:post, endpoint).to_timeout
+      [reviewable, second, third].each { |queued| run_for(queued) }
+      expect(stub).to have_been_requested.once
+      expect(entry_of(second)).to include("status" => "queued", "attempts" => 0)
+    end
+
+    it "lifts the pause and the limit when the administrator changes the key" do
+      stub =
+        answer(429, { "kod" => "limit_dobowy_klucza", "komunikat" => "x", "ponow_za_s" => 36_000 })
+      run_job
+      expect(MinosModeration::Store.pause).to be_present
+      expect(MinosModeration::Store.limit).to be_present
+
+      SiteSetting.minos_api_key = "wgb2b_inny_klucz_testowy_000000000000"
+      expect(MinosModeration::Store.pause).to be_nil
+      expect(MinosModeration::Store.limit).to be_nil
+      answer(202)
+      run_for(second)
+      expect(entry_of(second)["status"]).to eq("submitted")
+      expect(stub).to have_been_requested.once
+    end
+
+    it "sends again once the pause is over, and the next 202 lifts it" do
+      stub =
+        stub_request(:post, endpoint).to_return(
+          {
+            status: 429,
+            body: { "blad" => { "kod" => "kolejka_pelna", "ponow_za_s" => 30 } }.to_json,
+          },
+          { status: 202, body: "{}" },
+        )
+      run_job
+      run_for(second)
+      expect(stub).to have_been_requested.once
+
+      freeze_time(31.seconds.from_now)
+      run_for(second)
+      expect(stub).to have_been_requested.twice
+      expect(entry_of(second)["status"]).to eq("submitted")
+      expect(MinosModeration::Store.pause).to be_nil
     end
   end
 
