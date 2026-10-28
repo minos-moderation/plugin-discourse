@@ -260,10 +260,26 @@ nazwy użytkownika — ani wiadomości prywatnych. Klucz trafia wyłącznie do n
 bramy; ani klucz, ani sekret nie są zapisywane w logach ani pokazywane na stronach. W
 logach Discourse wtyczka zapisuje tylko numer zgłoszenia, status HTTP i kod błędu bramy.
 
+### Co wtyczka przechowuje i jak długo
+
 Stan każdego wstrzymanego posta (czasy, próby, werdykt bez zamaskowanego tekstu i skrót
-kryptograficzny treści, nigdy sama treść) wtyczka trzyma w bazie forum i usuwa po 30
-dniach. Oryginalna treść posta opublikowanego z maskowaniem zostaje dla moderatorów tylko
-w historii zgłoszenia albo w historii edycji posta.
+kryptograficzny treści, nigdy sama treść) wtyczka trzyma w bazie forum (`PluginStore`) i
+usuwa po **30 dniach**. Oryginalnej treści posta wtyczka nie przechowuje wcale.
+
+Dłużej niż 30 dni zostają wpisy w **rejestrach samego Discourse**, które powstają, gdy
+wtyczka działa — podlegają one zasadom przechowywania danych forum, a nie wtyczki, i
+polityka prywatności forum powinna o nich mówić:
+
+- **historia zgłoszenia w kolejce przeglądu**: oryginalna treść posta opublikowanego z
+  maskowaniem prosto z kolejki (zmiana treści zgłoszenia) oraz notatki wtyczki — werdykt,
+  kategorie, powód, sygnał wsparcia i, gdy post z werdyktem `ocenzurowane` został
+  moderatorom, tekst z maskami bramy; widoczne dla moderatorów i administratorów;
+- **historia edycji posta**: oryginalna treść posta zamaskowanego już po publikacji (gdy
+  werdykt przyszedł po publikacji w trybie `fail-open`) — w **ukrytej** wersji, którą
+  Discourse pokazuje tylko moderatorom i administratorom, także gdy forum udostępnia
+  historię edycji wszystkim (`edit_history_visible_to_public`);
+- **flaga „powiadom moderatorów”** przy sygnale wsparcia i wiadomość do grupy
+  moderatorów, którą Discourse do niej dołącza (bez treści posta).
 
 ## Dla programistów
 

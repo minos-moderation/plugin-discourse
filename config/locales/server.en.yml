@@ -60,7 +60,7 @@ en:
       reject: "Post odrzucono."
       leave: "Post czeka na decyzję moderatora."
       keep: "Opublikowany wcześniej post zostaje bez zmian."
-      mask: "W opublikowanym wcześniej poście zamaskowano fragmenty; oryginalna treść jest w historii edycji posta."
+      mask: "W opublikowanym wcześniej poście zamaskowano fragmenty; oryginalna treść jest w ukrytej wersji w historii edycji posta, widocznej tylko dla zespołu forum."
       hide: "Opublikowany wcześniej post ukryto; moderator może go przywrócić."
     reasons:
       core_hold: "forum samo wymaga zatwierdzenia tego posta, więc werdykt jest tylko podpowiedzią"

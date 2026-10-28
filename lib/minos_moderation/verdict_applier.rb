@@ -23,9 +23,10 @@ module MinosModeration
   # the same queue. Nothing about it ever goes to the author, and such a post is never
   # rejected or hidden automatically (`Decision`).
   #
-  # The unmasked text is never copied into the plugin's store: the reviewable's history has
-  # it, and for a `dane_osobowe` mask it is exactly the personal data the mask removed. The
-  # entry keeps its digest only.
+  # The unmasked text is never copied into the plugin's store: the reviewable's history (a
+  # post masked in the queue) or a hidden revision of the post (a post masked after a
+  # fail-open publication) has it, for staff only; for a `dane_osobowe` mask it is exactly
+  # the personal data the mask removed. The entry keeps its digest only.
   #
   # Callers must not hold `Store.lock` for the same post: every public method takes it.
   class VerdictApplier
@@ -352,6 +353,12 @@ module MinosModeration
 
     # Edits the masks into a published post; hides it when that cannot be done exactly.
     #
+    # The edit is a hidden revision (`hidden: true`): the revision keeps the unmasked text,
+    # and Discourse shows a hidden revision to staff only, also where the forum makes edit
+    # histories public (`edit_history_visible_to_public`). So the moderators keep the
+    # original and no reader can open it. A Discourse that would ignore the option gets
+    # the revision hidden right after, as staff's "hide revision" does.
+    #
     # @return [Array(Decision::Result, Hash)] what was done, and fields for the entry.
     def mask(post, reviewable, decision, verdict)
       payload = reviewable ? reviewable.payload : {}
@@ -373,6 +380,7 @@ module MinosModeration
             skip_validations: true,
             bypass_bump: true,
             bypass_rate_limiter: true,
+            hidden: true,
           )
         rescue *ACTION_ERRORS => e
           log("masking the published post raised #{e.class.name}")
@@ -380,7 +388,24 @@ module MinosModeration
         end
       return [unmasked(post, decision, :action_failed), {}] unless revised
 
+      hide_original(post)
       [decision, originals(raw, title)]
+    end
+
+    # Makes sure the revision that holds a masked post's original is hidden from everyone
+    # but staff.
+    #
+    # @param post [Post] the post just masked.
+    # @return [void]
+    def hide_original(post)
+      post.reload
+      revision = ::PostRevision.find_by(post_id: post.id, number: post.version)
+      return if revision.nil? || revision.hidden
+
+      revision.hide!
+      post.update_columns(public_version: [post.public_version.to_i - 1, 1].max)
+    rescue ::ActiveRecord::ActiveRecordError => e
+      log("hiding the masked post's revision raised #{e.class.name}")
     end
 
     # A published post whose masks could not be edited in: hidden, unless it carries

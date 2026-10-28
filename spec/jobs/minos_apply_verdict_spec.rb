@@ -382,6 +382,24 @@ RSpec.describe Jobs::MinosApplyVerdict do
       expect(entry).not_to have_key("original")
     end
 
+    it "keeps the original in a revision staff can see and readers cannot, edit history public or not" do
+      SiteSetting.edit_history_visible_to_public = true
+      late(assessed("ocenzurowane", "ocenzurowany" => sent[:text].sub("world", mask * 5)))
+
+      revision = PostRevision.find_by(post_id: post.id, number: post.version)
+      expect(revision).to be_present
+      expect(revision.hidden).to be(true)
+      # The moderators keep the original...
+      expect(revision.modifications["raw"].first).to eq(raw)
+      expect(Guardian.new(Fabricate(:moderator)).can_see_post_revision?(revision)).to be(true)
+      # ...and no reader, signed in or not, the author included, can open it.
+      [nil, Fabricate(:user), post.user].each do |reader|
+        expect(Guardian.new(reader).can_see_post_revision?(revision)).to be(false), reader.inspect
+      end
+      expect(post.public_version).to eq(1)
+      expect(PostRevision.where(post_id: post.id, hidden: false)).to be_empty
+    end
+
     it "hides the post when the censored setting leaves such posts to moderators" do
       SiteSetting.minos_censored_action = "zostaw_moderatorom"
       late(assessed("ocenzurowane", "ocenzurowany" => sent[:text].sub("world", mask * 5)))

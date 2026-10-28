@@ -117,7 +117,8 @@ and the verdict without its masked text, for 30 days. A table without dates
 5. The failure mode (`Decision.for_failure`) never publishes a post Discourse held itself
    or a moderator edited. When it publishes one (fail-open), the entry ends
    `auto_published` with the post's id, and a verdict that still arrives goes through
-   `Decision.for_late_verdict`: `keep`, `mask` (`PostRevisor#revise!` as the system user)
+   `Decision.for_late_verdict`: `keep`, `mask` (`PostRevisor#revise!` as the system user,
+   a hidden revision: the original is for staff only)
    or `hide` (`Post#hide!`) — unless a person acted on the post since (deleted, hid,
    edited it, or reviewed a flag on it), whose decision stays. A verdict with `wsparcie`
    never hides the post (nor does a mask that cannot be carried out): it is kept, with
@@ -229,9 +230,14 @@ a post in flight at the upgrade: its verdict is then not applied (`edited`) and 
 moderator decides, the safe direction.
 
 State lives in `PluginStore` (`minos-moderation`, key `pending:<reviewable id>`, plus
-`problem` and `limit`); see `Store` for the fields. It never holds the unmasked text of a masked post
-(a digest at most): the reviewable's history and the post's revisions keep it where
-Discourse's own permissions guard it. Every read-modify-write of an entry runs under a
+`problem`, `limit` and `pause`); see `Store` for the fields. An entry is removed 30 days
+after it finished (shared plugin rule A8). It never holds the unmasked text of a masked
+post (a digest at most): the reviewable's history (a post masked in the queue) and a
+hidden revision of the post (a post masked after a fail-open publication,
+`PostRevisor#revise!(…, hidden: true)`) keep it where only staff can see it, also on a
+forum with `edit_history_visible_to_public`. Those, the plugin's notes on the review item
+and the support flag are Discourse's own records: they follow the forum's retention,
+not the plugin's 30 days, and the README names them. Every read-modify-write of an entry runs under a
 `DistributedMutex` per reviewable, so the job, the webhook and the sweeper never apply
 two outcomes to one post.
 
@@ -447,6 +453,12 @@ Verified in Discourse's source (`main`, September 2026) or in
   also messages the author and hides a first post's topic), `Post.with_deleted`,
   `Post#version`, `PostRevisor#revise!(editor, fields, skip_validations:, bypass_bump:,
   bypass_rate_limiter:)` with an `edit_reason`, `ReviewableFlaggedPost` statuses;
+- `PostRevisor#revise!(…, hidden: true)` ("Force the created revision to be hidden from
+  non-staff users": `PostRevision#hidden`, `public_version` not raised),
+  `PostRevision#hide!`, `PostRevisionGuardian#can_see_post_revision?` (a hidden revision
+  only for `can_view_hidden_post_revisions?`, i.e. staff, before
+  `edit_history_visible_to_public` is read), `PostRevisionSerializer` leaving hidden
+  revisions out for non-staff, `PostsController#latest_revision` (`main`, 2026-10-28);
 - the per-IP limits `max_reqs_per_ip_per_10_seconds` (50), `max_reqs_per_ip_per_minute`
   (200) and `max_reqs_per_ip_mode` (`block`) in `config/discourse_defaults.conf`;
 - `public_suffix` in Discourse's `Gemfile.lock` (through `addressable`);
