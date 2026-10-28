@@ -91,5 +91,11 @@
   {"name": "a fence opened in a quote on an item's line, closed in it", "raw": "- > ```\n  > x\n  > ```\n  > zak<b>a</b>zane", "sent": "- > ```\nx\n\nzakazane", "reader": "x\nzakazane"},
   {"name": "emphasis in an HTML block is shown as written", "raw": "</div>\nzak**a**zane dalej", "sent": "zak**a**zane dalej", "reader": "zak**a**zane dalej"},
   {"name": "emphasis inside a bare link is shown as written", "raw": "Adres http://e.example/*ku*rwa koniec", "sent": "Adres http://e.example/*ku*rwa koniec", "reader": "Adres http://e.example/*ku*rwa koniec"},
-  {"name": "a link's address in angle brackets, with a title", "raw": "Ty [ku](<https://e.example/a b> 'x y')rwa", "sent": "Ty kurwa https://e.example/a b x y", "reader": "Ty kurwa\nx y"}
+  {"name": "a link's address in angle brackets, with a title", "raw": "Ty [ku](<https://e.example/a b> 'x y')rwa", "sent": "Ty kurwa https://e.example/a b x y", "reader": "Ty kurwa\nx y"},
+  {"name": "an image by a full reference", "raw": "Ty ![x][1]kurwa tu\n\n[1]: https://e.example/i.png", "sent": "Ty x kurwa 1 tu\n\n[1]: https://e.example/i.png", "reader": "Ty x kurwa tu"},
+  {"name": "an image by reference with no alt text", "raw": "Ty ![][1]kurwa tu\n\n[1]: https://e.example/i.png", "sent": "Ty  kurwa 1 tu\n\n[1]: https://e.example/i.png", "reader": "Ty kurwa tu"},
+  {"name": "an image by a collapsed reference", "raw": "Ty ![x][]kurwa tu\n\n[x]: https://e.example/i.png", "sent": "Ty x kurwa tu\n\n[x]: https://e.example/i.png", "reader": "Ty x kurwa tu"},
+  {"name": "an image by a shortcut reference", "raw": "Ty ![x]kurwa tu\n\n[x]: https://e.example/i.png", "sent": "Ty x kurwa tu\n\n[x]: https://e.example/i.png", "reader": "Ty x kurwa tu"},
+  {"name": "an image by reference to a label nobody defined", "raw": "Ty ![x][2]kurwa tu\n\n[1]: https://e.example/i.png", "sent": "Ty ![x][2]kurwa tu\n\n[1]: https://e.example/i.png", "reader": "Ty ![x][2]kurwa tu"},
+  {"name": "brackets in an image's alt text, not a link", "raw": "Ty ![a [b] ku](https://e.example/i.png)rwa jedna", "sent": "Ty ![a [b] ku](https://e.example/i.png)rwa jedna", "reader": "Ty a [b] ku rwa jedna"}
 ]

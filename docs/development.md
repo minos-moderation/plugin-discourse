@@ -97,8 +97,9 @@ reader can see is dropped; where removing something is not certain, more is sent
   inline (`[t](u "x")`, `[t](<u>)`), full (`[t][l]`), collapsed (`[t][]`) and shortcut
   (`[t]`) links, a reference one only where the post defines its label (in any case; a
   definition's address may stand on the next line), as markdown-it reads them, also
-  inside brackets that are not a link. An image keeps its alt text and title in its
-  place, apart from the words around it. A lone or escaped marker (`\[`, `\&`) a reader
+  inside brackets that are not a link. An image (inline or by reference, read the same
+  way; `[…]` after a `!` is never a link) keeps its alt text and title in its place,
+  apart from the words around it; a reference's label follows the next word. A lone or escaped marker (`\[`, `\&`) a reader
   sees as it is written stays, so that it never joins two words. A quote leaves the
   title Discourse shows, a details block its summary, each on a line of its own.
 - Each line is read as markdown-it's block rules read it (`Text.line_kinds`): fenced code
@@ -366,9 +367,8 @@ Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 - that the Discourse-tier specs added after the first CI run pass as written.
   `text_reader_view_spec.rb` ran against `PrettyText.cook` in CI (runs 40664872308 and
   40673051491): every entry passed but one, which showed that Discourse keeps `title` on
-  `span` (the chat plugin's allow list); `span` is now a tooltip tag. Run 40680836559
-  passed all 69 entries of that time; the 24 added after it (titled and reference links,
-  fences in a quote in a list item, tables, Markdown in HTML blocks and bare links) have
+  `span` (the chat plugin's allow list); `span` is now a tooltip tag. Run 40694521200
+  passed all 93 entries of that time; the 6 added after it (images by reference) have
   not run there yet;
 - `PublicSuffix.domain` is called as the gem documents it (nil for an invalid name); the
   plugin sends no `link_domains` when the constant is missing;
@@ -415,7 +415,7 @@ Not verified (no Discourse checkout here; only CI runs the Discourse tier):
     opposite. No fuzz post found it;
   - **less**, tooltips only: a third-party plugin that allows `title` on another tag
     needs that tag in `Text::TOOLTIP_TAGS`;
-  - **more**: an image by reference (`![alt][1]`), a reference definition whose
-    address is not valid, a link to a label defined only that way (its words then
-    reach the gateway joined, as the link shows them, never split), and a definition's
-    lines themselves are sent as written.
+  - **more**: a reference definition whose address is not valid, a link or an image to
+    a label defined only that way (a link's words then reach the gateway joined, as
+    the link shows them, never split), and a definition's lines themselves are sent as
+    written.

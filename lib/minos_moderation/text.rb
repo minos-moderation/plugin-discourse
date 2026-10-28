@@ -344,11 +344,19 @@ module MinosModeration
         ops
       end
 
-    # A Markdown image becomes its alt text and title, apart from the words around it.
+    # A Markdown image becomes its alt text and title, apart from the words around it; a
+    # reference's label follows the word after it (its address is not sent: `link_hosts`
+    # reads it).
     IMAGE_PARTS =
       lambda do |match|
-        shown = [1, 2].filter_map { |group| match.offset(group) if match[group] }
-        spaced_image(match, shown.reject { |from, to| to <= from })
+        shown = [match.offset(:alt)]
+        if match[:title]
+          from, to = match.offset(:title)
+          shown << [from + 1, to - 1]
+        end
+        ops = spaced_image(match, shown.reject { |from, to| to <= from })
+        ops << [:after_word, *match.offset(:label)] if match[:label]
+        ops
       end
 
     # A Markdown link becomes its text; its address, its title (a tooltip) and its label
@@ -388,9 +396,20 @@ module MinosModeration
         [[:text, ENTITIES[legacy]], [:keep, match.begin(3) + legacy.length, match.end(0)]]
       end
 
-    # A Markdown image: group 1 its alt text (before a Discourse size, `|690x400`), group 2
-    # its title.
-    MD_IMAGE = /!\[([^\]\n|]*)(?:\|[^\]\n]*)?\]\(\s*<?[^)\s>]*>?(?:\s+"([^"\n]*)")?\s*\)/
+    # A Markdown image as markdown-it's image rule reads one: its label (`inner`: the `alt`
+    # text, then a Discourse size, `|690x400`), then an inline `(dest "title")`, a full
+    # reference `[label]`, a collapsed one `[]`, or none (a shortcut). A reference is an
+    # image only where the post defines its label ({image_shown?}).
+    MD_IMAGE = /
+      !\[(?<inner>(?<alt>[^\]\n|]*)(?:\|[^\]\n]*)?)\]
+      (?:
+        \(\s*
+          (?<dest><(?:[^<>\n\\]|\\.)*>|(?:[^()\s\\]|\\.|\((?:[^()\s\\]|\\.)*\))*)
+          (?:\s+(?<title>"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?
+        \s*\)
+      | \[(?<label>(?:[^\[\]\\]|\\.)*)\]
+      )?
+    /x
 
     # A Markdown link as markdown-it's link rule reads one: its `text` (brackets in it
     # balanced, one level deep), then an inline `(dest "title")` (parentheses in the
@@ -423,7 +442,7 @@ module MinosModeration
     INLINE_CODE_CLOSE = %r{\[/code\]}i
 
     # The same, matched only where a scan stands.
-    MD_IMAGE_AT = /\G#{MD_IMAGE.source}/
+    MD_IMAGE_AT = /\G#{MD_IMAGE}/
     MD_LINK_AT = /\G#{MD_LINK}/
 
     # What a backslash escapes in Markdown: ASCII punctuation.
@@ -453,7 +472,7 @@ module MinosModeration
       [/(?<!\\)#{HTML_COMMENT.source}/m, [], :inline_html], # comments, with their text
       [/(?<!\\)(?:#{HTML_TAG.source})/, [TAG_PARTS], :inline_html], # tags (not escaped ones)
       [FENCE_MARKER, [1]], # code fence markers (an info string stays)
-      [MD_IMAGE, [IMAGE_PARTS], :markdown], # image → its alt text and its title, not its URL
+      [MD_IMAGE, [IMAGE_PARTS], :image], # image → its alt text and title, not its URL
       [MD_LINK, [LINK_PARTS], :link], # link → its text, then its URL, title and label
       [AUTOLINK, [1], :markdown], # `<https://…>` → the link without its brackets
       [DETAILS_OPEN, [{ group: 1, after: "\n" }, { group: 2, after: "\n" }], :block],
@@ -659,6 +678,9 @@ module MinosModeration
         end
       when :link
         ->(match, at) { link_shown?(match, at, reading) }
+      when :image
+        markdown = guard_for(:markdown, text, blocks, reading)
+        ->(match, at) { markdown.call(match, at) && image_shown?(match, reading) }
       when :inline_html
         # markdown-it reads an inline tag or comment within one paragraph, or an HTML
         # block's lines; one that reaches past them is text.
@@ -691,6 +713,9 @@ module MinosModeration
     def self.link_shown?(match, at, reading)
       first = at[match.begin(0)]
       return false if first.nil? || reading.code[first] || escaped?(reading, first)
+      # After a `!` not escaped, markdown-it reads an image, never a link.
+      return false if first.positive? && reading.source[first - 1] == "!" &&
+                      !escaped?(reading, first - 1)
       return false if reading.urls[first] || reading.urls[at[match.end(0) - 1]]
 
       span = (match.begin(0)...match.end(0))
@@ -701,6 +726,15 @@ module MinosModeration
       return true if match[:dest]
 
       label = match[:label].to_s.empty? ? match[:text] : match[:label]
+      reading.refs.key?(reference_key(label))
+    end
+
+    # @return [Boolean] whether a {MD_IMAGE} match is an image: an inline one, or a
+    #   reference to a label the post defines.
+    def self.image_shown?(match, reading)
+      return true if match[:dest]
+
+      label = match[:label].to_s.empty? ? match[:inner] : match[:label]
       reading.refs.key?(reference_key(label))
     end
 
@@ -1525,14 +1559,23 @@ module MinosModeration
     # @param refs [Hash{String => true}] the labels the post defines.
     # @return [MatchData, nil]
     def self.markdown_link(text, index, to, refs)
-      pattern = { "[" => MD_LINK_AT, "!" => MD_IMAGE_AT }[text[index]]
-      link = pattern&.match(text, index)
+      image = text[index] == "!"
+      return nil unless image || text[index] == "["
+
+      # After a `!` not escaped, markdown-it reads an image, never a link.
+      if !image && index.positive? && text[index - 1] == "!"
+        before = index - 1
+        before -= 1 while before.positive? && text[before - 1] == "\\"
+        return nil if (index - 1 - before).even?
+      end
+
+      link = (image ? MD_IMAGE_AT : MD_LINK_AT).match(text, index)
       return nil unless link && link.end(0) <= to
-      return (link[1].to_s.include?("`") ? nil : link) if text[index] == "!"
-      return nil unless code_spans_within?(text, link.begin(1), link.end(1), to)
+      return nil if image && link[:inner].include?("`")
+      return nil if !image && !code_spans_within?(text, link.begin(1), link.end(1), to)
       return link if link[:dest]
 
-      label = link[:label].to_s.empty? ? link[:text] : link[:label]
+      label = link[:label].to_s.empty? ? link[1] : link[:label]
       refs.key?(reference_key(label)) ? link : nil
     end
 
@@ -1800,10 +1843,10 @@ module MinosModeration
                          :table_cells, :cell_count, :lazy_end?, :quote_prefix, :fence_content,
                          :quote_markers, :fence_closed?, :html_start, :inline_reading,
                          :inline_bbcode, :paragraphs, :block_opener?, :inline_scan, :bare_link,
-                         :markdown_link, :code_spans_within?, :link_shown?, :reference_key,
-                         :guard_for, :escaped?, :delimiters?, :flanking, :spaced_image,
-                         :backtick_run, :walk_blocks, :bbcode_tag, :inline_close, :block_close,
-                         :plugin_opener?, :block_tag?, :blank_from?, :columns, :trim, :clean,
-                         :spaced, :js_number_string
+                         :markdown_link, :code_spans_within?, :link_shown?, :image_shown?,
+                         :reference_key, :guard_for, :escaped?, :delimiters?, :flanking,
+                         :spaced_image, :backtick_run, :walk_blocks, :bbcode_tag, :inline_close,
+                         :block_close, :plugin_opener?, :block_tag?, :blank_from?, :columns, :trim,
+                         :clean, :spaced, :js_number_string
   end
 end
