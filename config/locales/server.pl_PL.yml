@@ -22,6 +22,25 @@ pl_PL:
   dashboard:
     problem:
       minos_gateway_problem: "Minos — moderacja postów: %{szczegoly}. Do czasu naprawy posty są traktowane zgodnie z ustawieniem minos_failure_mode. <a href='%{base_path}/admin/site_settings/category/plugins?filter=minos'>Ustawienia wtyczki</a>"
+  reports:
+    minos_moderation:
+      title: "Minos — czas do werdyktu i werdykty"
+      description: "Z ostatnich 7 dni: ile czasu mija od przyjęcia posta przez bramę do doręczenia werdyktu (mediana i 95. percentyl) oraz ile postów dostało każdy werdykt. Liczone z czasów, które wtyczka i tak zapisuje — bez treści postów i bez dodatkowych zapytań do bramy."
+      labels:
+        measure: "Miara"
+        value: "Wartość"
+      rows:
+        p50: "Czas od wysłania do werdyktu — mediana (P50)"
+        p95: "Czas od wysłania do werdyktu — 95. percentyl (P95)"
+        timed: "Posty, dla których zmierzono czas"
+        bezpieczne: "Werdykt „bezpieczne”"
+        ocenzurowane: "Werdykt „ocenzurowane”"
+        zablokowane: "Werdykt „zablokowane”"
+        nieocenione: "Werdykt „nieocenione”"
+        no_verdict: "Bez werdyktu (tryb awarii po upływie czasu, odmowie bramy albo błędzie konfiguracji)"
+      seconds: "%{sekundy} s"
+      minutes: "%{minuty} min %{sekundy} s"
+      no_data: "brak danych"
   minos_moderation:
     edit_reason: "Minos: zamaskowano fragmenty"
     notes:

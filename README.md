@@ -197,6 +197,18 @@ doręczony w tym czasie wraca po ponowieniu. Przerwa dłuższa niż około 12 mi
 werdykt — post czeka wtedy do końca czasu `minos_timeout_minutes` i przechodzi w tryb
 awarii. Wyłączona wtyczka odpowiada na dostawy kodem 404.
 
+## Raport: czas do werdyktu i werdykty
+
+W panelu administratora, w **Raportach**, wtyczka dodaje raport „Minos — czas do werdyktu
+i werdykty” (widoczny dla moderatorów i administratorów, gdy wtyczka jest włączona). Z
+ostatnich 7 dni pokazuje: medianę (P50) i 95. percentyl (P95) czasu od przyjęcia posta
+przez bramę (odpowiedź 202) do doręczenia werdyktu, liczbę postów, dla których ten czas
+zmierzono, liczbę werdyktów `bezpieczne`, `ocenzurowane`, `zablokowane` i `nieocenione`
+oraz liczbę postów, które zakończyły się bez werdyktu (tryb awarii po upływie czasu,
+odmowie bramy albo błędzie konfiguracji). Liczby powstają z czasów i werdyktów, które
+wtyczka i tak przechowuje przez 30 dni — raport nie zapisuje niczego nowego, nie wysyła
+zapytań do bramy i nie zawiera treści postów, klucza ani sekretu.
+
 ## Co wtyczka wysyła, a czego nigdy
 
 Do bramy trafia, dla każdego wstrzymanego posta:

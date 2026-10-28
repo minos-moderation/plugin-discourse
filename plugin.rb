@@ -30,4 +30,11 @@ after_initialize do
   if respond_to?(:register_problem_check)
     register_problem_check(MinosModeration::MinosGatewayProblem)
   end
+
+  # Admin → Reports: the time from submission to verdict and the verdict counts.
+  if respond_to?(:add_report)
+    add_report(MinosModeration::VerdictReport::NAME) do |report|
+      MinosModeration::VerdictReport.fill(report)
+    end
+  end
 end

@@ -8,7 +8,7 @@ plugin. The gateway's contract, from the client's side, is `docs/contract.md` in
 
 | Path | What |
 |---|---|
-| `plugin.rb` | Metadata, `enabled_site_setting :minos_enabled`, the `NewPostManager` handler, the problem check |
+| `plugin.rb` | Metadata, `enabled_site_setting :minos_enabled`, the `NewPostManager` handler, the problem check, the report |
 | `config/settings.yml` | The thirteen settings, all under `plugins:` |
 | `config/locales/` | Server and client strings, Polish, for `pl_PL` and `en` (see "Locales") |
 | `config/routes.rb` | `POST /minos/webhook`, through `MinosModeration::Engine` mounted at `/minos` |
@@ -25,11 +25,26 @@ plugin. The gateway's contract, from the client's side, is `docs/contract.md` in
 | `.github/workflows/release.yml` | On a `v*` tag: checks `plugin.rb`'s version against the tag (`.github/scripts/check-release-version.sh`) and creates the GitHub Release |
 
 The standalone files (`signature.rb`, `webhook_payload.rb`, `scores.rb`, `text.rb`,
-`decision.rb`, `gateway_client.rb`) use plain Ruby and its standard library, so every
-rule that decides what is sent and what happens to a post is proven without Discourse.
-Every Discourse touch point sits in a thin class (`settings.rb`, `store.rb`,
+`decision.rb`, `gateway_client.rb`, `metrics.rb`) use plain Ruby and its standard library,
+so every rule that decides what is sent and what happens to a post is proven without
+Discourse. Every Discourse touch point sits in a thin class (`settings.rb`, `store.rb`,
 `new_post_handler.rb`, `submission.rb`, `receiver.rb`, `verdict_applier.rb`, `sweep.rb`,
-`minos_gateway_problem.rb`).
+`minos_gateway_problem.rb`, `verdict_report.rb`).
+
+## The administrator's report
+
+`plugin.rb` registers the report `minos_moderation` with `add_report` (Admin → Reports,
+"Minos — czas do werdyktu i werdykty"; staff only, listed while the plugin is enabled).
+`VerdictReport.fill` reads every entry and `Metrics.summary` computes, for the last seven
+days: the median (P50) and 95th percentile (P95, both nearest rank) of the seconds from
+the gateway's `202` (`submitted_at`, noted also when the verdict came first) to the
+verdict's delivery (`received_at`; a verdict that came before the `202` was noted counts
+as 0), how many posts were measured, one count per verdict value (`bezpieczne`,
+`ocenzurowane`, `zablokowane`, `nieocenione`, an unknown one as `nieocenione`) and the
+posts that finished without a verdict (the failure mode; not those a person handled
+first). Nothing new is stored and no request is made: the entries already keep the times
+and the verdict without its masked text, for 30 days. A table without dates
+(`dates_filtering = false`); its texts are `reports.minos_moderation.*` in the locales.
 
 ## A post's way through the plugin
 
@@ -375,6 +390,12 @@ Verified in Discourse's source (`main`, September 2026) or in
 - the score reason text `reviewables.reasons.<reason>` (`ReviewableScoreSerializer`);
 - `ProblemCheck` (realtime when `perform_every` is unset; `problem`, `no_problem`,
   `translation_data`, the key `dashboard.problem.<identifier>`);
+- `add_report(name) { |report| … }` (`Report.add_report` defines `report_<name>`),
+  `Report::MODES[:table]`, `report.modes`, `report.dates_filtering`, `report.labels`
+  (`property`, `title`), `report.data`, the texts `reports.<name>.title` and
+  `.description`, `GET /admin/reports/<name>.json` (`Admin::StaffController`) and the
+  list `Reports::ListQuery`, which shows a plugin's report while the plugin is enabled
+  (`main`, 2026-10-28);
 - `PluginStore.get/set/remove/cast_value`, `PluginStoreRow`, `DistributedMutex.synchronize`;
 - `Jobs::Base` (`sidekiq_options`), `Jobs::Scheduled` + `every`, `Jobs.enqueue`,
   `Jobs.enqueue_in`;

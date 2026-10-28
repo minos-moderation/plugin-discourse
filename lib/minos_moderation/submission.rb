@@ -198,10 +198,13 @@ module MinosModeration
     def accepted
       now = Time.now.to_i
       Store.update(@id) do |entry|
-        # A fast gateway may have delivered the verdict already: keep what it recorded.
-        next nil unless entry["status"] == "sending"
-
-        entry.merge("status" => "submitted", "submitted_at" => now)
+        if entry["status"] == "sending"
+          entry.merge("status" => "submitted", "submitted_at" => now)
+        elsif !entry["submitted_at"].is_a?(Integer)
+          # A fast gateway may have delivered the verdict already: keep what it recorded,
+          # and note only when the gateway accepted the post (`Metrics`).
+          entry.merge("submitted_at" => now)
+        end
       end
       # Also lifts the shared pause: the gateway takes requests again.
       Store.clear_problem
