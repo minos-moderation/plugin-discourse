@@ -88,31 +88,48 @@ The rule: **the text sent for assessment is the text a reader sees**, and nothin
 reader can see is dropped; where removing something is not certain, more is sent. So
 `Text.for_submission` reduces the raw Markdown as Discourse renders it:
 
-- Markdown markup goes where markdown-it reads it as markup: paired `**`, `__`, `~~`,
-  single `*`/`_` emphasis, heading and blockquote markers, fence markers (an info string
-  stays), link and image syntax (the alt text and title stay, the link's URL too). A
-  lone marker a reader sees as it is written stays, so that it never joins two words.
-  A quote leaves the title Discourse shows, a details block its summary.
+- Markdown markup goes where markdown-it reads it as markup: emphasis (`**`, `__`, `~~`,
+  `*`, `_`) only where its `scanDelims` lets the markers open and close (so `kur~~<i>wa~~`
+  keeps its tildes: a tilde next to punctuation does not open), heading and blockquote
+  markers, fence markers (an info string stays), an autolink's brackets. A link keeps
+  its text in place and its address follows the word the link ends in, so a link inside
+  a word (`Ty [ku](…)rwa`) never splits it; an image keeps its alt text and title in its
+  place, apart from the words around it. A lone or escaped marker (`\[`, `\&`) a reader
+  sees as it is written stays, so that it never joins two words. A quote leaves the
+  title Discourse shows, a details block its summary, each on a line of its own.
 - Each line is read as markdown-it's block rules read it (`Text.line_kinds`): fenced code
   (closed only by a fence of at most three spaces, at the top, in a blockquote or in a
-  list item, or by the end of its container), indented code, HTML blocks, a table's
-  header line.
-- Code is shown as it is written, so it is sent as it is written (`Text.code_chars`):
-  fenced and indented code blocks, code spans (markdown-it's backtick rule, escapes and
-  HTML tags passed over) and `[code]…[/code]`. Only a span's backticks and the space
-  markdown-it trims at each of its ends go.
+  list item, or by the end of its container), indented code (also after a thematic
+  break or a setext underline, and a list marker indented four or more columns past its
+  list), HTML blocks (in a list item too), a table's header line, a link reference
+  definition (shown as nothing; sent as written). A paragraph's line indented four
+  columns or more continues it, whatever it starts with. A lazy line (fewer blockquote
+  markers than the paragraph it follows) keeps the blockquote open, unless it opens a
+  BBCode block, or in a nested blockquote any block: then it ends the blockquote, as
+  markdown-it's terminators do, and a list in it.
+- Code is shown as it is written, so it is sent as it is written (`Text.inline_reading`):
+  fenced and indented code blocks, code spans (markdown-it's backtick rule, escapes, HTML
+  tags and links passed over) and `[code]…[/code]` (inline, taken in the same left to
+  right order, up to the next closing tag). Only a span's backticks and the space
+  markdown-it trims at each of its ends go. Also as written: a bare link, as
+  markdown-it's inline linkify takes one (`Text::BARE_LINK`, linkify-it's expressions:
+  brackets and parentheses balanced in its path, trailing `*` left out, none inside a
+  link), and the lines of an HTML block, where Markdown's inline syntax is not read.
 - `[quote=…]`/`[details=…]` is a block only where Discourse's `bbcode-block.js` makes one
   (`Text.block_tags`): at the first column, closed by its tag at the very end of the line
   or alone on a later line (nested tags counted), never in code, an HTML block, a table's
   header or another BBCode block. Elsewhere it is sent as written, attribute included.
-- Outside code, HTML tags (markdown-it's grammar, an escaped `\<` excepted) go: a block
-  tag leaves a line break, an `<img>` its alt text and title in its place, and a tooltip
-  Discourse's sanitizer keeps (`title` of `a` and `abbr` by its default allow list, of
-  `summary` by the details plugin, of `span` by the chat plugin) follows the word it is
-  on, so it never splits it. An HTML comment goes with its text. No other attribute is
-  sent: the sanitizer removes it or a reader does not see it (an `href`). What is not
-  sent does not count toward the 3000 characters. A plugin that allows `title` on
-  another tag would need that tag in `Text::TOOLTIP_TAGS`.
+  Other BBCode markers (`[b]`, `[code]`, `[spoiler]`, …) go only where Discourse pairs
+  them within one paragraph; an unclosed one stays.
+- Outside code, HTML tags and comments (markdown-it's grammar, an escaped `\<` excepted)
+  go, each within one paragraph or HTML block (one that reaches past it is text): a
+  block tag leaves a line break, an `<img>` its alt text and title in its place, and a
+  tooltip Discourse's sanitizer keeps (`title` of `a` and `abbr` by its default allow
+  list, of `summary` by the details plugin, of `span` by the chat plugin) follows the
+  word it is on, so it never splits it. An HTML comment goes with its text. No other
+  attribute is sent: the sanitizer removes it or a reader does not see it (an `href`).
+  What is not sent does not count toward the 3000 characters. A plugin that allows
+  `title` on another tag would need that tag in `Text::TOOLTIP_TAGS`.
 - Character references are decoded as a browser decodes them (`html_entities.json`, the
   HTML standard's named references, generated from Python's `html.entities.html5`),
   except in code; decoded characters have no origin, so a mask on one holds the post.
@@ -341,8 +358,9 @@ Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 - that the Discourse-tier specs added after the first CI run pass as written.
   `text_reader_view_spec.rb` ran against `PrettyText.cook` in CI (runs 40664872308 and
   40673051491): every entry passed but one, which showed that Discourse keeps `title` on
-  `span` (the chat plugin's allow list); `span` is now a tooltip tag. The entry with a
-  `div` title, added after that, has not run there yet;
+  `span` (the chat plugin's allow list); `span` is now a tooltip tag. The entries added
+  after that (a `div` title; the review's and the fuzz's cases of links, images, HTML
+  blocks, bare links, lazy lines and emphasis) have not run there yet;
 - `PublicSuffix.domain` is called as the gem documents it (nil for an invalid name); the
   plugin sends no `link_domains` when the constant is missing;
 - the exact oldest Discourse version with every API above (`ReviewableNote` in
@@ -370,3 +388,15 @@ Not verified (no Discourse checkout here; only CI runs the Discourse tier):
   see only in its history; a more visible alert is a follow-up.
 - Configuration errors reach the admin dashboard through a problem check; on a
   Discourse without `register_problem_check` they reach only the log.
+- The reduction of `tekst` models markdown-it and Discourse's BBCode rules; it is not
+  their renderer. Checked against them (markdown-it 15 with Discourse's
+  `bbcode-block.js` and `bbcode-inline.js`) on 42 000 random posts of the review's two
+  generators, a tooltip counted apart from the words it sits in (as a reader sees it):
+  none sends a word a reader sees split or not at all, except where an attribute is
+  left open at the end of an HTML block (`<span title="a` with its closing quote on the
+  next line): the browser runs it on into the following blocks, and what that tooltip
+  then shows is not modelled (10 posts). Also not modelled: a blockquote inside a list
+  item beyond its first line; a link with a title (`[t](u "x")`), a reference link or a
+  link text with a backtick (each sent as written); markdown-it's whole balancing of
+  emphasis markers (paired left to right here). Each errs towards sending markup a
+  reader does not see.

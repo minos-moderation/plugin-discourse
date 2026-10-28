@@ -153,6 +153,13 @@ RSpec.describe "MinosModeration::Text" do
       expect(sent(%(<span title="widoczna">z</span>))).to eq("z widoczna")
     end
 
+    it "keeps pieces that follow one word apart from each other" do
+      expect(sent(%(a <abbr title="x"></abbr><abbr title="y"></abbr> b))).to eq("a x y b")
+      expect(sent(%(z<abbr title="x">a</abbr>[k](https://e.test)u dalej))).to eq(
+        "zaku https://e.test x dalej",
+      )
+    end
+
     it "removes a comment with its text, which no reader sees" do
       expect(sent("przed <!-- ukryty komentarz --> po")).to eq("przed  po")
       expect(sent("a<!-->b")).to eq("ab")
@@ -538,6 +545,9 @@ RSpec.describe "MinosModeration::Text" do
       expect(body_masks(raw, sent, sent)).to eq(raw)
     end
 
+    # A mask can change how Markdown reads around it (`█` is a symbol, so a `**` next to it
+    # may no longer open emphasis): the masked post must send the masked verdict, up to
+    # emphasis markers the mask left standing.
     it "always produces Markdown whose sent text carries every mask of the verdict" do
       samples = [
         "a **b** c", "> cytat z **tym** słowem\n\nakapit", "[x](https://e.test) y **z**",
@@ -555,7 +565,8 @@ RSpec.describe "MinosModeration::Text" do
           next if result.nil?
 
           checked += 1
-          expect(text.for_submission(result)[:text][index]).to eq(mask), "#{raw.inspect} @#{index}"
+          resent = text.for_submission(result)[:text]
+          expect(resent.delete("*~")).to eq(masked.delete("*~")), "#{raw.inspect} @#{index}"
         end
       end
       expect(checked).to be > 30, "almost every mask was refused: the property checks nothing"

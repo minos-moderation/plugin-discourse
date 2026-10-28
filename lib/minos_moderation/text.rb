@@ -16,17 +16,21 @@ module MinosModeration
   #
   # - a `[quote=…]` or `[details=…]` is a block only where Discourse makes it one (at the
   #   start of a line, with its closing tag; {block_tags}); anywhere else it is sent as
-  #   it is written;
+  #   it is written; another BBCode tag's markers go only where Discourse pairs them;
   # - code (fenced, indented, between backticks, in `[code]`) is shown as it is written,
-  #   so it is sent as it is written ({code_chars}): only the fence markers and the
-  #   backticks go;
-  # - everywhere else HTML tags and comments go, so that `zak<b>a</b>zane` or
-  #   `zak<!-- -->azane` reaches the gateway as the reader's one word: a block tag leaves
-  #   a line break, an `<img>` its alt text and title in its place, a tooltip (a `title`
-  #   the sanitizer keeps: {TOOLTIP_TAGS}) follows the word it is on; a comment's text
-  #   and the attributes the sanitizer removes, which no reader sees, are not sent;
-  # - single `*` and `_` emphasis markers go, entities are decoded as a browser decodes
-  #   them, and characters invisible by default (a soft hyphen, a zero-width space) go.
+  #   so it is sent as it is written ({inline_reading}): only the fence markers and the
+  #   backticks go; so is a bare link (markdown-it's linkify) and every line of an HTML
+  #   block, where Markdown's own syntax is not read;
+  # - everywhere else HTML tags and comments go, within one paragraph or HTML block, so
+  #   that `zak<b>a</b>zane` or `zak<!-- -->azane` reaches the gateway as the reader's one
+  #   word: a block tag leaves a line break, an image (`<img>` or Markdown's) its alt text
+  #   and title in its place, apart from the words around it; a tooltip (a `title` the
+  #   sanitizer keeps: {TOOLTIP_TAGS}) and a link's address follow the word they are in;
+  #   a comment's text and the attributes the sanitizer removes, which no reader sees,
+  #   are not sent;
+  # - emphasis markers go where markdown-it reads them as delimiters, entities are
+  #   decoded as a browser decodes them, and characters invisible by default (a soft
+  #   hyphen, a zero-width space) go.
   #
   # **What comes back.** `ocenzurowany` masks the sent text one `█` per character. Every
   # sent character remembers the title or raw character it came from, so {apply_masks}
@@ -50,9 +54,44 @@ module MinosModeration
     # or Markdown punctuation.
     LINK = %r{https?://[^\s<>()\[\]"']+}i
 
-    # BBCode tags whose markers go (the text between them stays). A quote's and a details'
-    # go only where Discourse makes a block of them ({block_tags}).
+    # BBCode tags whose markers go (the text between them stays) where Discourse renders
+    # them: paired in one paragraph, or as a block. A quote's and a details' go only where
+    # Discourse makes a block of them ({block_tags}).
     BBCODE = "spoiler|b|i|u|s|code|url|img|color|size|center|left|right"
+
+    # One of them: group 1 "/" for a closing tag, group 2 its name.
+    INLINE_BBCODE = %r{\[(/?)(#{BBCODE})(?:=[^\]\n]*)?\]}io
+
+    # A bare link as markdown-it's inline linkify rule takes one, with linkify-it's
+    # expressions (`linkify-it/lib/re.mjs`): a scheme not glued to a letter, a digit, one
+    # of ".+-" or a backslash before it; a host of "pseudo letters" (not punctuation, a
+    # space or a control character); a port; a path that stops at a blank, at "<" or
+    # ">", and before a trailing "." "," ";" "!" "?" or unpaired bracket. markdown-it then
+    # drops trailing "*" ({inline_scan}). Its characters are shown as they are written.
+    LINKIFY_SPACE = "[\\p{Z}\\p{Cc}]"
+    LINKIFY_LETTER = "(?:(?![<>\\uFF5C]|[\\p{Z}\\p{P}\\p{Cc}]).)"
+    LINKIFY_DOMAIN =
+      "(?:xn--[a-z0-9\\-]{1,59}|#{LINKIFY_LETTER}|" \
+      "#{LINKIFY_LETTER}(?:-|#{LINKIFY_LETTER}){0,61}#{LINKIFY_LETTER})"
+    LINKIFY_PATH =
+      "(?:[/?#](?:(?!#{LINKIFY_SPACE}|[<>\\uFF5C]|[()\\[\\]{}.,\"'?!\\-;]).|" \
+      "\\[(?:(?!#{LINKIFY_SPACE}|\\]).)*\\]|\\((?:(?!#{LINKIFY_SPACE}|\\)).)*\\)|" \
+      "\\{(?:(?!#{LINKIFY_SPACE}|\\}).)*\\}|\"(?:(?!#{LINKIFY_SPACE}|\").)+\"|" \
+      "'(?:(?!#{LINKIFY_SPACE}|').)+'|'(?=#{LINKIFY_LETTER}|-)|\\.{2,}[a-zA-Z0-9%/&]|" \
+      "\\.(?!#{LINKIFY_SPACE}|\\.|\\z)|-+|,(?!#{LINKIFY_SPACE}|\\z)|;(?!#{LINKIFY_SPACE}|\\z)|" \
+      "!+(?!#{LINKIFY_SPACE}|!|\\z)|\\?(?!#{LINKIFY_SPACE}|\\?|\\z))+|/)?"
+    BARE_LINK =
+      Regexp.new(
+        "\\G(?<![A-Za-z0-9.+\\-\\\\])(?:https?|ftp)://" \
+          "(?:(?:(?!#{LINKIFY_SPACE}|[@/\\[\\]()]).)+@)?" \
+          "(?:#{LINKIFY_DOMAIN}\\.)*#{LINKIFY_DOMAIN}" \
+          "(?::(?:6(?:[0-4]\\d{3}|5(?:[0-4]\\d{2}|5(?:[0-2]\\d|3[0-5])))|[1-5]?\\d{1,4}))?" \
+          "(?=\\z|[<>\\uFF5C]|[\\p{Z}\\p{P}\\p{Cc}])" \
+          "(?!-|_|:\\d|\\.-|\\.(?!\\z|[\\p{Z}\\p{P}\\p{Cc}]))" \
+          "#{LINKIFY_PATH}",
+        Regexp::IGNORECASE,
+        timeout: 1.0,
+      )
 
     # The spaces `TextCleaner.normalize_whitespaces` turns into a plain space when
     # `PostCreator#setup_post` saves a post: Discourse renders the normalised text.
@@ -176,6 +215,18 @@ module MinosModeration
     # An ATX heading, which is a block of its own.
     ATX_HEADING = /\A {0,3}\#{1,6}(?:[ \t]|\z)/
 
+    # A link reference definition on one line (`[label]: /address "title"`), which
+    # markdown-it reads only where a paragraph could start, and which shows nothing.
+    REFERENCE =
+      /\A {0,3}\[(?:[^\[\]\\]|\\.)*[^\[\]\\\s](?:[^\[\]\\]|\\.)*\]:[ \t]*(?:<[^<>\n]*>|[^<\s]\S*)
+       (?:[ \t]+(?:"[^"]*"|'[^']*'|\([^()]*\)))?[ \t]*\z/x
+
+    # A thematic break (`---`, `***`, `___`, spaces allowed between).
+    HR = /\A {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})\z/
+
+    # The underline of a setext heading, under a paragraph's line.
+    SETEXT = /\A {0,3}(?:=+|-+)[ \t]*\z/
+
     # Tag names that start an HTML block of CommonMark's kind 6.
     HTML_BLOCK_NAMES = %w[
       address article aside base basefont blockquote body caption center col colgroup dd
@@ -276,16 +327,27 @@ module MinosModeration
           values = attribute_values(match)
           if name == "img"
             shown = values.values_at("alt", "title").compact.reject { |from, to| to <= from }
-            shown.each_with_index do |(from, to), index|
-              ops << [:text, " "] unless index.zero?
-              ops << [:keep, from, to]
-            end
+            ops.concat(spaced_image(match, shown))
           elsif TOOLTIP_TAGS.include?(name) && values["title"]
             ops << [:after_word, *values["title"]]
           end
         end
         ops << [:text, "\n"] if BLOCK_TAGS.include?(name)
         ops
+      end
+
+    # A Markdown image becomes its alt text and title, apart from the words around it.
+    IMAGE_PARTS =
+      lambda do |match|
+        shown = [1, 2].filter_map { |group| match.offset(group) if match[group] }
+        spaced_image(match, shown.reject { |from, to| to <= from })
+      end
+
+    # A Markdown link becomes its text; its address follows the word the link ends, so it
+    # never splits a word (a reader does not see it, but it tells what the post links to).
+    LINK_PARTS =
+      lambda do |match|
+        [[:keep, *match.offset(1)], [:after_word, *match.offset(2)]]
       end
 
     # A character reference becomes its characters, which have no origin (so a mask on
@@ -307,6 +369,35 @@ module MinosModeration
         [[:text, ENTITIES[legacy]], [:keep, match.begin(3) + legacy.length, match.end(0)]]
       end
 
+    # A Markdown image: group 1 its alt text (before a Discourse size, `|690x400`), group 2
+    # its title.
+    MD_IMAGE = /!\[([^\]\n|]*)(?:\|[^\]\n]*)?\]\(\s*<?[^)\s>]*>?(?:\s+"([^"\n]*)")?\s*\)/
+
+    # A Markdown link: group 1 its text (no bracket in it, as markdown-it balances them),
+    # group 2 its address (parentheses in it balanced, one level deep).
+    MD_LINK = /\[([^\[\]\n]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/
+
+    # An autolink, `<scheme:…>`, which markdown-it shows without its brackets (not one it
+    # refuses to link: `javascript:`, `vbscript:`, `file:`, `data:`). Group 1 the link.
+    AUTOLINK =
+      %r{
+        (?<!\\)<
+        ((?!(?:javascript|vbscript|file|data):)[A-Za-z][A-Za-z0-9.+-]{1,31}:[^<>\x00-\x20]*)
+        >
+      }ix
+
+    # An inline `[code]` tag as `parseBBCodeTag` reads one (an attribute allowed), and the
+    # closing tag `bbcode-inline.js` looks for, in any case.
+    INLINE_CODE_OPEN = /\G\[code(?:=[^\]\n]*)?\]/i
+    INLINE_CODE_CLOSE = %r{\[/code\]}i
+
+    # The same, matched only where a scan stands.
+    MD_IMAGE_AT = /\G#{MD_IMAGE.source}/
+    MD_LINK_AT = /\G#{MD_LINK.source}/
+
+    # What a backslash escapes in Markdown: ASCII punctuation.
+    ESCAPABLE = /[!-\/:-@\[-`{-~]/
+
     # The steps that run before the analysis of the text's blocks: line endings.
     LINE_ENDINGS = [
       [/\r(?=\n)/, []], # CRLF → LF
@@ -321,50 +412,50 @@ module MinosModeration
     # lambda returns operations (`[:keep, from, to]`, `[:text, made_up]`, `[:after_word,
     # from, to]`, which keeps the characters after the word the match is in). A step marked
     # `:block` leaves a match as it is unless {block_tags} found a Discourse block there;
-    # one marked `:prose` leaves a match that touches code ({code_chars}) as it is; one
+    # one marked `:markdown` leaves a match that touches code or an HTML block's line
+    # ({inline_reading}) as it is, and one marked `:emphasis` also a pair whose markers
+    # markdown-it would not read as delimiters ({delimiters?}); one
     # marked `:dropped` replaces only what a code span shows nothing of. Markup a reader
     # sees as it is written (a lone `*`, an unpaired backtick) stays, so that it never
     # joins the words around it.
     MARKUP = [
-      [/(?<!\\)#{HTML_COMMENT.source}/m, [], :prose], # comments, with their text
-      [/(?<!\\)(?:#{HTML_TAG.source})/, [TAG_PARTS], :prose], # tags (not escaped ones)
+      [/(?<!\\)#{HTML_COMMENT.source}/m, [], :inline_html], # comments, with their text
+      [/(?<!\\)(?:#{HTML_TAG.source})/, [TAG_PARTS], :inline_html], # tags (not escaped ones)
       [FENCE_MARKER, [1]], # code fence markers (an info string stays)
-      [
-        /!\[([^\]\n|]*)(?:\|[^\]\n]*)?\]\(\s*<?[^)\s>]*>?(?:\s+"([^"\n]*)")?\s*\)/,
-        [1, { group: 2, before: " " }],
-        :prose,
-      ], # image → its alt text and its title (the URL goes; `link_hosts` reads it)
-      [/\[([^\]\n]+)\]\(([^)\s]+)\)/, [1, " ", 2]], # link → its text and its URL
-      [DETAILS_OPEN, [1, 2], :block], # details → its summary
+      [MD_IMAGE, [IMAGE_PARTS], :markdown], # image → its alt text and its title, not its URL
+      [MD_LINK, [LINK_PARTS], :markdown], # link → its text, then its URL
+      [AUTOLINK, [1], :markdown], # `<https://…>` → the link without its brackets
+      [DETAILS_OPEN, [{ group: 1, after: "\n" }, { group: 2, after: "\n" }], :block],
+      # details → its summary, on a line of its own
       [QUOTE_OPEN, [{ span: QUOTE_TITLE, join: ", ", after: "\n" }], :block],
       # quote → the title Discourse shows (not `post:`, `topic:` or `username:`)
       [BLOCK_BARE, [], :block], # `[quote]`, `[details]` and the closing tags of blocks
-      [%r{\[/?(?:#{BBCODE})(?:=[^\]\n]*)?\]}io, [], :prose], # other BBCode tags
+      [INLINE_BBCODE, [], :paired], # other BBCode tags, where Discourse pairs them
       [/^[ \t]{0,3}\#{1,6}[ \t]+/, []], # ATX heading markers
       [/^(?:[ \t]{0,3}>[ \t]?)+/, []], # blockquote markers
       [/[ \n`]/, [], :dropped], # a code span's backticks and the spaces markdown-it trims
       [
         /(?<!\\)\*\*(?![#{JS_SPACE}*])([^\n]*?[^#{JS_SPACE}*\\])\*\*/o,
         [1],
-        :prose,
+        :emphasis,
       ], # **strong**
-      [/(?<!\\)~~(?![#{JS_SPACE}~])([^\n]*?[^#{JS_SPACE}~\\])~~/o, [1], :prose], # ~~struck~~
+      [/(?<!\\)~~(?![#{JS_SPACE}~])([^\n]*?[^#{JS_SPACE}~\\])~~/o, [1], :emphasis], # ~~struck~~
       [
         /(?<![\\_\p{Alnum}])__(?![#{JS_SPACE}_])([^\n]*?[^#{JS_SPACE}_\\])__(?![_\p{Alnum}])/o,
         [1],
-        :prose,
+        :emphasis,
       ], # __strong__
       [
         /(?<![\\*])\*(?![#{JS_SPACE}*])([^*\n]*?[^#{JS_SPACE}*\\])\*(?!\*)/o,
         [1],
-        :prose,
+        :emphasis,
       ], # *emphasis*
       [
         /(?<![\\_\p{Alnum}])_(?![#{JS_SPACE}_])([^_\n]*?[^#{JS_SPACE}_\\])_(?![_\p{Alnum}])/o,
         [1],
-        :prose,
+        :emphasis,
       ], # _emphasis_ (not inside a word, as markdown-it)
-      [ENTITY, [ENTITY_PARTS], :prose], # character references → characters
+      [ENTITY, [ENTITY_PARTS], :entity], # character references → characters
       [INVISIBLE, []], # characters invisible by default
       [/[ \t]+$/, []], # trailing blanks
       [/(\n\n)\n+/, [1]], # runs of blank lines
@@ -483,45 +574,126 @@ module MinosModeration
     # @return [Array(Array<String>, Array<Integer, nil>)] the characters and their origins.
     def self.reduce(raw)
       chars = spaced(clean(raw))
+      source = chars
       origins = (0...chars.length).to_a
       chars, origins = steps(LINE_ENDINGS, chars, origins)
       text = chars.join
       lines = line_spans(text)
       kinds = line_kinds(text, lines)
-      block_lines = {}
-      blocks = block_tags(text, origins, lines, kinds, block_lines)
-      unless block_lines.empty?
+      seen = { lines: {}, code: [], markers: [] }
+      blocks = block_tags(text, origins, lines, kinds, seen)
+      unless seen[:lines].empty?
         # A BBCode block's line ends a paragraph: what follows it is read again.
-        kinds = line_kinds(text, lines, block_lines)
-        blocks = block_tags(text, origins, lines, kinds)
+        kinds = line_kinds(text, lines, seen[:lines])
+        seen = { lines: {}, code: [], markers: [] }
+        blocks = block_tags(text, origins, lines, kinds, seen)
       end
-      dropped = {}
-      code = code_chars(text, origins, lines, kinds, dropped)
-      chars, origins = steps(MARKUP, chars, origins, blocks: blocks, code: code, dropped: dropped)
+      reading = inline_reading(text, origins, lines, kinds, seen, source)
+      chars, origins = steps(MARKUP, chars, origins, blocks: blocks, reading: reading)
       trim(chars, origins)
     end
 
     # Runs steps of {MARKUP}'s shape over a text.
     #
     # @param blocks [Hash{Integer => Integer}] {block_tags}, for the steps marked `:block`.
-    # @param code [Hash{Integer => true}] {code_chars}, for the steps marked `:prose`.
-    # @param dropped [Hash{Integer => true}] what a code span shows nothing of, for
-    #   `:dropped`.
+    # @param reading [Reading] {inline_reading}, for the other guards.
     # @return [Array(Array<String>, Array<Integer, nil>)] the characters and their origins.
-    def self.steps(list, chars, origins, blocks: {}, code: {}, dropped: {})
+    def self.steps(list, chars, origins, blocks: {}, reading: nil)
+      reading ||= Reading.new({}, {}, {}, {}, {}, {}, [])
       list.each do |pattern, parts, guard|
-        allowed =
-          case guard
-          when :block
-            ->(match, at) { block_tag?(match, at, blocks) }
-          when :prose
-            ->(match, at) { (match.begin(0)...match.end(0)).none? { |index| code[at[index]] } }
-          when :dropped
-            ->(match, at) { dropped[at[match.begin(0)]] }
-          end
-        chars, origins = replace(chars.join, chars, origins, pattern, parts, allowed)
+        text = chars.join
+        allowed = guard && guard_for(guard, text, blocks, reading)
+        chars, origins = replace(text, chars, origins, pattern, parts, allowed)
       end
       [chars, origins]
+    end
+
+    # The test a step marked with `guard` puts to each of its matches.
+    #
+    # @return [Proc] given the match and the origins, whether to replace it.
+    def self.guard_for(guard, text, blocks, reading)
+      code = reading.code
+      prose = ->(match, at) { (match.begin(0)...match.end(0)).none? { |index| code[at[index]] } }
+      case guard
+      when :block
+        ->(match, at) { block_tag?(match, at, blocks) }
+      when :markdown
+        # Markdown's inline syntax, which an HTML block shows as it is written, and a bare
+        # link too: its markers must not stand in one. An escaped one is text.
+        lambda do |match, at|
+          prose.call(match, at) && !escaped?(reading, at[match.begin(0)]) &&
+            (match.begin(0)...match.end(0)).none? { |index| reading.html[at[index]] } &&
+            !reading.urls[at[match.begin(0)]] && !reading.urls[at[match.end(0) - 1]]
+        end
+      when :inline_html
+        # markdown-it reads an inline tag or comment within one paragraph, or an HTML
+        # block's lines; one that reaches past them is text.
+        lambda do |match, at|
+          segment = reading.segments[at[match.begin(0)]]
+          !segment.nil? && prose.call(match, at) &&
+            (match.begin(0)...match.end(0)).all? { |index| reading.segments[at[index]] == segment }
+        end
+      when :emphasis
+        markdown = guard_for(:markdown, text, blocks, reading)
+        ->(match, at) { markdown.call(match, at) && delimiters?(match, at, reading.source) }
+      when :entity
+        # A bare link shows a reference in it as it is written.
+        lambda do |match, at|
+          prose.call(match, at) && !reading.urls[at[match.begin(0)]] &&
+            !escaped?(reading, at[match.begin(0)])
+        end
+      when :paired
+        ->(match, at) { (match.begin(0)...match.end(0)).all? { |index| reading.paired[at[index]] } }
+      when :dropped
+        ->(match, at) { reading.dropped[at[match.begin(0)]] }
+      end
+    end
+
+    # @return [Boolean] whether the source character at `origin` follows an odd run of
+    #   backslashes outside code: escaped, so a reader sees it as it is written.
+    def self.escaped?(reading, origin)
+      return false unless origin
+
+      index = origin - 1
+      index -= 1 while index >= 0 && reading.source[index] == "\\" && !reading.code[index]
+      (origin - 1 - index).odd?
+    end
+
+    # Unicode punctuation and symbols, which markdown-it's `isPunctChar` reads as
+    # punctuation (ASCII punctuation among them).
+    MD_PUNCTUATION = /[\p{P}\p{S}]/
+
+    # Whether markdown-it's `scanDelims` lets an emphasis pair's first markers open and its
+    # last markers close, by the characters around each run of markers in the source.
+    #
+    # @param match [MatchData] an emphasis step's match: the markers around group 1.
+    # @return [Boolean]
+    def self.delimiters?(match, at, source)
+      size = (match[0].length - match[1].length) / 2
+      opening = at[match.begin(0)]
+      closing = at[match.end(0) - size]
+      return false unless opening && closing
+
+      flanking(source, opening, match[0][0])[0] && flanking(source, closing, match[0][0])[1]
+    end
+
+    # @return [Array(Boolean, Boolean)] whether the run of markers at `from` can open and
+    #   whether it can close, as `scanDelims` decides (`_` cannot split a word).
+    def self.flanking(source, from, marker)
+      start = from
+      start -= 1 while start.positive? && source[start - 1] == marker
+      stop = from
+      stop += 1 while source[stop] == marker
+      before = start.positive? ? source[start - 1] : " "
+      after = source[stop] || " "
+      last_space = MD_WHITESPACE.match?(before)
+      next_space = MD_WHITESPACE.match?(after)
+      last_punctuation = MD_PUNCTUATION.match?(before)
+      next_punctuation = MD_PUNCTUATION.match?(after)
+      left = !next_space && (!next_punctuation || last_space || last_punctuation)
+      right = !last_space && (!last_punctuation || next_space || next_punctuation)
+      split = marker != "_"
+      [left && (split || !right || last_punctuation), right && (split || !left || next_punctuation)]
     end
 
     # One step of {MARKUP}.
@@ -596,13 +768,47 @@ module MinosModeration
     # @param later [Array<Array>] `[position, chars, origins]` of each piece.
     # @return [Array(Array<String>, Array<Integer, nil>)] the characters and their origins.
     def self.after_words(chars, origins, later)
-      later.reverse_each do |position, piece_chars, piece_origins|
-        at = (position...chars.length).find { |index| chars[index].match?(/\s/) } || chars.length
-        space = at.positive? && !chars[at - 1].match?(/\s/)
-        chars.insert(at, *((space ? [" "] : []) + piece_chars))
-        origins.insert(at, *((space ? [nil] : []) + piece_origins))
+      return [chars, origins] if later.empty?
+
+      # The first blank at or after each place, found once for the whole text.
+      blank = Array.new(chars.length + 1, chars.length)
+      (chars.length - 1).downto(0) do |index|
+        blank[index] = chars[index].match?(/\s/) ? index : blank[index + 1]
       end
-      [chars, origins]
+      out_chars = []
+      out_origins = []
+      from = 0
+      later.group_by { |position, _chars, _origins| blank[position] }.sort.each do |at, pieces|
+        out_chars.concat(chars[from...at])
+        out_origins.concat(origins[from...at])
+        pieces.each do |_position, piece_chars, piece_origins|
+          if !out_chars.empty? && !out_chars.last.match?(/\s/)
+            out_chars << " "
+            out_origins << nil
+          end
+          out_chars.concat(piece_chars)
+          out_origins.concat(piece_origins)
+        end
+        from = at
+      end
+      [out_chars.concat(chars[from..]), out_origins.concat(origins[from..])]
+    end
+
+    # An image's alt text and title, in its place: a space before and after it where a
+    # word touches it, so that neither joins the image's words.
+    #
+    # @param shown [Array<Array(Integer, Integer)>] the alt text's and title's ranges.
+    # @return [Array<Array>] the operations of a {MARKUP} lambda.
+    def self.spaced_image(match, shown)
+      text = match.string
+      ops = []
+      ops << [:text, " "] if match.begin(0).positive? && text[match.begin(0) - 1].match?(/\S/)
+      shown.each_with_index do |(from, to), index|
+        ops << [:text, " "] unless index.zero?
+        ops << [:keep, from, to]
+      end
+      ops << [:text, " "] if text[match.end(0)].to_s.match?(/\S/)
+      ops
     end
 
     # The values of an open tag's attributes, by lower-case name (the first of a name).
@@ -648,10 +854,11 @@ module MinosModeration
     # @param origins [Array<Integer, nil>] its characters' origins.
     # @param lines [Array<Array(Integer, Integer)>] {line_spans}.
     # @param kinds [Array<Symbol>] {line_kinds}.
-    # @param block_lines [Hash{Integer => true}] collects the lines that open or close any
-    #   BBCode block, for {line_kinds}.
+    # @param seen [Hash] collects, for any BBCode block: `:lines` (the lines that open or
+    #   close it, for {line_kinds}), `:markers` (its tags, as text ranges) and `:code` (the
+    #   content of a `[code]` block).
     # @return [Hash{Integer => Integer}] the origin of each such tag's "[" => its length.
-    def self.block_tags(text, origins, lines, kinds, block_lines = {})
+    def self.block_tags(text, origins, lines, kinds, seen = { lines: {}, code: [], markers: [] })
       # Each line's tag as a closing line reads it, once: the search for a block's end
       # then only looks the lines up.
       marks =
@@ -665,7 +872,7 @@ module MinosModeration
       opaque = kinds.each_index.select { |index| %i[fence html table].include?(kinds[index]) }
       found = {}
       opaque = opaque.to_h { |index| [index, true] }
-      walk_blocks(text, origins, lines, marks, opaque, 0, lines.size, found, block_lines)
+      walk_blocks(text, origins, lines, marks, opaque, 0, lines.size, found, seen)
       found
     rescue Regexp::TimeoutError
       {}
@@ -689,7 +896,9 @@ module MinosModeration
     # which lines are code and where no BBCode block can start: `:fence` (a fenced code
     # block, its fences included), `:code` (an indented code block), `:html` (an HTML
     # block), `:table` (a table's header line), `:bbcode` (a line that opens or closes a
-    # BBCode block, from `block_lines`), `:blank` or `:text`. Fences and indented code are
+    # BBCode block, from `block_lines`), `:break` (a thematic break or a setext heading's
+    # underline), `:deep` (a paragraph's line indented four columns or more), `:reference`
+    # (a link reference definition), `:blank` or `:text`. Fences and indented code are
     # read at the top level, in a blockquote and in a list item.
     #
     # @param block_lines [Hash{Integer => true}] the lines {block_tags} found opening or
@@ -700,13 +909,17 @@ module MinosModeration
       fence = nil
       html = nil
       list = nil
+      list_depth = 0
       previous = :blank
+      outer = 0
       lines.each_with_index do |(from, to), index|
         line = text[from...to]
         if block_lines[index]
-          # A BBCode block's tag line ends whatever its content left open.
+          # A BBCode block's tag line ends whatever its content left open, and a list it
+          # is not indented into.
           kinds[index] = :bbcode
           fence = html = nil
+          list = nil if list && columns(line[/\A[ \t]*/]) < list
           previous = :bbcode
           next
         end
@@ -721,17 +934,29 @@ module MinosModeration
           fence = nil
         end
         if html
-          if html == :blank && line.strip.empty?
+          inner = fence_content(line, html)
+          if inner.nil? || (html[:end] == :blank && inner.strip.empty?)
             html = nil
           else
             kinds[index] = :html
-            html = nil if html != :blank && line.downcase.include?(html)
+            html = nil if html[:end] != :blank && line.downcase.include?(html[:end])
             previous = :html
             next
           end
         end
 
         depth, rest = quote_prefix(line)
+        # A line opening a deeper blockquote starts a new container: what came before it
+        # cannot continue there. A line with fewer markers continues a blockquote's
+        # paragraph lazily, and the blockquote stays open, unless it starts a block that
+        # ends the blockquote ({lazy_end?}); then it may be indented code.
+        previous = :blank if depth > outer
+        if depth >= outer || previous != :text || rest.strip.empty?
+          outer = depth
+        elsif lazy_end?(rest.lstrip, outer)
+          previous = :blank
+          outer = depth
+        end
         if rest.strip.empty?
           kinds[index] = :blank
           previous = :blank
@@ -739,26 +964,37 @@ module MinosModeration
         end
 
         indent = columns(rest[/\A[ \t]*/])
-        item = LIST_ITEM.match(rest)
         loose = rest.lstrip
+        item = LIST_ITEM.match(rest)
+        item = nil if item && indent - (list || 0) >= 4
         # A list item ends at a line less indented than its content, unless that line
-        # continues the item's paragraph (only text does; a block never does).
-        if depth.positive? ||
+        # continues the item's paragraph (only text does; a block never does), and with
+        # the blockquote it is in.
+        if depth.positive? || (list && depth < list_depth && previous != :text) ||
              (list && !item && indent < list &&
                (previous != :text || FENCE_OPEN.match?(loose) || ATX_HEADING.match?(loose) ||
-                 html_start(loose, previous)))
+                 HR.match?(loose) || html_start(loose, previous)))
           list = nil
         end
         base = list || 0
-        if item && indent - base < 4
+        item = nil if item && indent - base >= 4
+        relative = indent - base
+        # A thematic break, or the underline of a heading: a block of its own, so the next
+        # line can start anything (indented code too). It comes before a list item.
+        if relative < 4 && (SETEXT.match?(loose) && previous == :text || HR.match?(loose))
+          kinds[index] = :break
+          previous = :break
+          next
+        end
+        if item
           spaces = item[3].empty? || item[3].length > 4 ? 1 : item[3].length
           list = item[1].length + item[2].length + spaces
+          list_depth = depth
           content = rest[list..].to_s
           relative = content[/\A */].length
           container = list
         else
           content = loose
-          relative = indent - base
           container = base
         end
 
@@ -769,20 +1005,45 @@ module MinosModeration
           previous = :fence
           next
         end
+        # A link reference definition, where a paragraph could start: shown as nothing,
+        # and no paragraph for the next line to continue.
+        if !item && relative < 4 && previous != :text && REFERENCE.match?(content)
+          kinds[index] = :reference
+          previous = :blank
+          next
+        end
         # Indented code: anywhere but on a paragraph's next line, which it cannot interrupt.
         if !item && relative >= 4 && previous != :text
           kinds[index] = :code
           previous = :code
           next
         end
-        if !item && relative < 4 && (ending = html_start(content.lstrip, previous))
+        if relative < 4 && (ending = html_start(content.lstrip, item ? :blank : previous))
           kinds[index] = :html
-          html = ending unless ending != :blank && line.downcase.include?(ending)
+          unless ending != :blank && line.downcase.include?(ending)
+            html = { end: ending, depth: depth, indent: container }
+          end
           previous = :html
           next
         end
-        # A heading is a block of its own: the next line can start anything.
-        previous = !item && ATX_HEADING.match?(content) ? :heading : :text
+        # An item that opens with a blockquote holding an HTML block: that line only (the
+        # blockquote inside a list item is not followed further).
+        if item && (inner = quote_prefix(content)).first.positive? &&
+             html_start(inner.last.lstrip, :blank)
+          kinds[index] = :html
+          previous = :html
+          next
+        end
+        # A paragraph's line indented four columns or more continues it, whatever it starts
+        # with: no block interrupts it there.
+        kinds[index] = :deep if !item && relative >= 4
+        # A heading is a block of its own: the next line can start anything; so is an empty
+        # list item, which leaves no paragraph to continue.
+        previous =
+          if item && content.strip.empty? then :blank
+          elsif !item && ATX_HEADING.match?(content) then :heading
+          else :text
+          end
       end
       kinds.each_index do |index|
         next unless kinds[index] == :text && index + 1 < lines.size
@@ -791,6 +1052,24 @@ module MinosModeration
         kinds[index] = :table if DELIMITER_ROW.match?(quote_prefix(below)[1].strip)
       end
       kinds
+    end
+
+    # Whether a line with fewer blockquote markers than the paragraph it follows ends the
+    # blockquote rather than continuing the paragraph: a BBCode block's opening tag does,
+    # whatever its indentation (Discourse's block rule does not look at it); in a nested
+    # blockquote, so does any block start (markdown-it then reads a lazy line's
+    # indentation as -1, so no terminator finds it too deep).
+    #
+    # @param start [String] the line from its first non-blank character.
+    # @param depth [Integer] how many blockquotes are open.
+    # @return [Boolean]
+    def self.lazy_end?(start, depth)
+      return true if block_opener?(start)
+      return false if depth < 2
+
+      fence = FENCE_OPEN.match(start)
+      (fence && !(fence[2].start_with?("`") && fence[3].include?("`"))) || HR.match?(start) ||
+        ATX_HEADING.match?(start) || LIST_ITEM.match?(start) || !html_start(start, :text).nil?
     end
 
     # @return [Array(Integer, String)] how many blockquote markers open a line, and the
@@ -855,25 +1134,42 @@ module MinosModeration
       end
     end
 
-    # The characters a reader sees as code, shown as they are written: the lines of fenced
-    # and indented code blocks, code between backticks (markdown-it's rule: a run closed by
-    # the next run of the same length within the same paragraph, an escaped backtick or
-    # one inside an HTML tag opening nothing) and `[code]…[/code]`.
+    # What {inline_reading} found: the origins of `code` (shown as written), of what a code
+    # span shows nothing of (`dropped`: its backticks, the spaces markdown-it trims), the
+    # `segments` (paragraph or HTML block, by number) an inline tag must stay within, and
+    # `paired` BBCode markers that Discourse renders (and so removes), `urls`: the
+    # characters of bare links, which markdown-it's linkify shows as they are written, and
+    # `html`: the lines of HTML blocks, where Markdown's inline syntax is shown as written;
+    # and the `source` characters the origins point at.
+    Reading = Struct.new(:code, :dropped, :segments, :paired, :urls, :html, :source)
+
+    # Reads what markdown-it's inline rules make of the text: code (fenced and indented
+    # blocks, a `[code]` block, code spans by markdown-it's backtick rule with escapes and
+    # HTML tags passed over, an inline `[code]…[/code]`), the paragraphs and HTML blocks
+    # that bound an inline tag, and the BBCode markers that pair up (an opening tag closed
+    # in the same paragraph, as `bbcode-inline.js` pairs them, or a block's own tags).
     #
-    # @param dropped [Hash{Integer => true}] collects the origins of what a code span shows
-    #   nothing of: its backticks, and the space at each end markdown-it trims (` x ` reads
-    #   `x`).
-    # @return [Hash{Integer => true}] the characters' origins.
-    def self.code_chars(text, origins, lines, kinds, dropped = {})
-      code = {}
-      mark = lambda do |from, to|
-        (from...to).each { |index| code[origins[index]] = true if origins[index] }
+    # @param seen [Hash] from {block_tags}: `:code` and `:markers` as text ranges.
+    # @return [Reading] the origins found.
+    def self.inline_reading(text, origins, lines, kinds, seen, source)
+      reading = Reading.new({}, {}, {}, {}, {}, {}, source)
+      mark = lambda do |from, to, into|
+        (from...to).each { |index| into[origins[index]] = true if origins[index] }
       end
       lines.each_with_index do |(from, to), index|
-        mark.call(from, to) if %i[fence code].include?(kinds[index])
+        mark.call(from, to, reading.code) if %i[fence code].include?(kinds[index])
       end
-      paragraphs(text, lines, kinds).each do |from, to|
-        inline_code(text, from, to, mark) do |span_from, inside_from, inside_to, span_to|
+      seen[:code].each { |from, to| mark.call(from, to, reading.code) }
+      seen[:markers].each { |from, to| mark.call(from, to, reading.paired) }
+      stretches = paragraphs(text, lines, kinds)
+      stretches.each_with_index do |(from, to), number|
+        (from...to).each { |index| reading.segments[origins[index]] = number if origins[index] }
+        marks = {
+          code: ->(start, stop) { mark.call(start, stop, reading.code) },
+          url: ->(start, stop) { mark.call(start, stop, reading.urls) },
+          pair: ->(start, stop) { mark.call(start, stop, reading.paired) },
+        }
+        inline_scan(text, from, to, marks) do |span_from, inside_from, inside_to, span_to|
           gone = (span_from...inside_from).to_a + (inside_to...span_to).to_a
           # markdown-it reads a newline in a span as a space, then trims one space off
           # each end of a span that has more than spaces.
@@ -881,11 +1177,47 @@ module MinosModeration
           if inside.length > 2 && inside.start_with?(" ") && inside.end_with?(" ")
             gone += [inside_from, inside_to - 1]
           end
-          gone.each { |at| dropped[origins[at]] = true if origins[at] }
+          gone.each { |at| reading.dropped[origins[at]] = true if origins[at] }
+        end
+        inline_bbcode(text, origins, from, to, reading, mark)
+      end
+      number = stretches.size
+      lines.each_with_index do |(from, to), index|
+        next unless kinds[index] == :html
+
+        number += 1 unless index.positive? && kinds[index - 1] == :html
+        stop = index + 1 < lines.size && kinds[index + 1] == :html ? lines[index + 1][0] : to
+        (from...stop).each { |at| reading.segments[origins[at]] = number if origins[at] }
+        mark.call(from, stop, reading.html)
+      end
+      reading
+    end
+
+    # Pairs the inline BBCode markers of one paragraph, outside code and bare links: an
+    # opening tag with the next closing tag of its name.
+    #
+    # @return [void]
+    def self.inline_bbcode(text, origins, from, to, reading, mark)
+      open = Hash.new { |hash, name| hash[name] = [] }
+      text[from...to].scan(INLINE_BBCODE) do
+        tag = Regexp.last_match
+        start = from + tag.begin(0)
+        stop = from + tag.end(0)
+        next if (start...stop).any? do |index|
+          reading.code[origins[index]] || reading.urls[origins[index]]
+        end
+
+        name = tag[2].downcase
+        # An inline `[code]` is {inline_scan}'s: what it did not take stays as written.
+        next if name == "code"
+
+        if tag[1].empty?
+          open[name] << [start, stop]
+        elsif (opening = open[name].pop)
+          mark.call(opening[0], opening[1], reading.paired)
+          mark.call(start, stop, reading.paired)
         end
       end
-      text.scan(%r{\[code\](.*?)\[/code\]}im) { mark.call(*Regexp.last_match.offset(1)) }
-      code
     end
 
     # The stretches of text whose inline content markdown-it reads as one: runs of text
@@ -895,11 +1227,16 @@ module MinosModeration
     def self.paragraphs(text, lines, kinds)
       stretches = []
       current = nil
+      outer = 0
       lines.each_with_index do |(from, to), index|
-        rest = quote_prefix(text[from...to])[1]
-        texty = %i[text table bbcode].include?(kinds[index])
+        depth, rest = quote_prefix(text[from...to])
+        texty = %i[text table bbcode deep].include?(kinds[index])
         alone = kinds[index] == :bbcode || ATX_HEADING.match?(rest)
-        starts = alone || LIST_ITEM.match?(rest) || block_opener?(rest.lstrip)
+        # A deeper blockquote is a new block; a shallower line may continue the paragraph
+        # (lazily), and its blockquotes stay open. A deep line only continues it.
+        starts = kinds[index] != :deep &&
+          (alone || depth > outer || LIST_ITEM.match?(rest) || block_opener?(rest.lstrip))
+        outer = depth unless texty && !starts && current && depth < outer
         if texty && !starts && current
           current[1] = to
         else
@@ -929,30 +1266,75 @@ module MinosModeration
       true
     end
 
-    # Marks the code spans of one stretch of text, scanning it as markdown-it's inline
-    # rules do from left to right: an escape or an HTML tag is passed over whole.
+    # Scans one stretch of text as markdown-it's inline rules do, from left to right: an
+    # escape, an HTML tag or comment, and a link or an image (its text read in turn) are
+    # passed over whole; a bare link goes to `:url` (not inside a link, where markdown-it's
+    # `linkLevel` turns linkify off); a code span goes to `:code` and, with its backticks'
+    # places, to the block; so does an inline `[code]…[/code]` (Discourse's
+    # `bbcode-inline.js` takes it up to the next closing tag), its tags to `:pair`.
     #
+    # @param marks [Hash{Symbol => Proc}] `:code`, `:url` and `:pair`: given a range,
+    #   mark it.
+    # @param links [Integer] how many links are open around the stretch.
     # @return [void]
-    def self.inline_code(text, from, to, mark)
+    def self.inline_scan(text, from, to, marks, links = 0, &spans)
       index = from
       while index < to
         char = text[index]
-        if char == "\\" && index + 1 < to && text[index + 1].match?(/[!-\/:-@\[-`{-~]/)
+        if char == "\\" && index + 1 < to && text[index + 1].match?(ESCAPABLE)
           index += 2
         elsif char == "`"
           run = text[index...to][/\A`+/].length
           close = backtick_run(text, index + run, to, run)
           if close
-            mark.call(index, close + run)
-            yield(index, index + run, close, close + run) if block_given?
+            marks[:code].call(index, close + run)
+            spans&.call(index, index + run, close, close + run)
           end
           index = close ? close + run : index + run
         elsif char == "<" && (tag = INLINE_HTML.match(text, index)) && tag.end(0) <= to
+          links += 1 if tag[0].match?(/\A<a[>#{JS_SPACE}]/io)
+          links -= 1 if tag[0].match?(%r{\A</a[#{JS_SPACE}]*>}io)
           index = tag.end(0)
+        elsif (link = markdown_link(text, index, to))
+          # An image's alt text is read anew; a link's text is inside a link.
+          inside = text[index] == "!" ? 0 : links + 1
+          inline_scan(text, link.begin(1), link.end(1), marks, inside, &spans)
+          index = link.end(0)
+        elsif char == "[" && (tag = INLINE_CODE_OPEN.match(text, index)) &&
+              (close = text.index(INLINE_CODE_CLOSE, tag.end(0))) && close + 7 <= to
+          marks[:pair].call(index, tag.end(0))
+          marks[:code].call(tag.end(0), close)
+          marks[:pair].call(close, close + 7)
+          index = close + 7
+        elsif links <= 0 && "hHfF".include?(char) && (bare = bare_link(text, index)) &&
+              bare.end(0) <= to
+          # markdown-it leaves trailing asterisks out of a link: they may close emphasis.
+          stop = bare.end(0)
+          stop -= 1 while text[stop - 1] == "*"
+          marks[:url].call(index, stop)
+          index = stop
         else
           index += 1
         end
       end
+    end
+
+    # @return [MatchData, nil] the bare link that starts at `index`; none when the
+    #   expression runs out of time (the characters are then read as Markdown).
+    def self.bare_link(text, index)
+      BARE_LINK.match(text, index)
+    rescue Regexp::TimeoutError
+      nil
+    end
+
+    # A link or an image that starts at `index`, read whole; not one whose text has a
+    # backtick, which may open a code span reaching past it.
+    #
+    # @return [MatchData, nil]
+    def self.markdown_link(text, index, to)
+      pattern = { "[" => MD_LINK_AT, "!" => MD_IMAGE_AT }[text[index]]
+      link = pattern&.match(text, index)
+      link if link && link.end(0) <= to && !link[1].to_s.include?("`")
     end
 
     # @return [Integer, nil] where the next run of exactly `length` backticks starts.
@@ -975,7 +1357,7 @@ module MinosModeration
     # rule does at one level, and the blocks inside a quote or details one level down.
     #
     # @return [void]
-    def self.walk_blocks(text, origins, lines, marks, opaque, first, last, found, block_lines)
+    def self.walk_blocks(text, origins, lines, marks, opaque, first, last, found, seen)
       index = first
       while index < last
         from, to = lines[index]
@@ -994,7 +1376,10 @@ module MinosModeration
         if inline
           start, length = inline
           if start + length == line.length
-            block_lines[index] = true
+            seen[:lines][index] = true
+            seen[:markers] << [from + indent.length, from + after]
+            seen[:markers] << [from + start, from + start + length]
+            seen[:code] << [from + after, from + start] if opener[:tag] == "code"
             if ours
               found[origins[from]] = opener[:length]
               found[origins[from + start]] = length
@@ -1010,14 +1395,15 @@ module MinosModeration
         end
 
         close_line, close_indent, close_length = closing
-        block_lines[index] = true
-        block_lines[close_line] = true
+        seen[:lines][index] = true
+        seen[:lines][close_line] = true
+        closer = lines[close_line][0] + close_indent
+        seen[:markers] << [from + indent.length, from + after] << [closer, closer + close_length]
+        seen[:code] << [lines[index][1] + 1, lines[close_line][0]] if opener[:tag] == "code"
         if ours
           found[origins[from]] = opener[:length]
           found[origins[lines[close_line][0] + close_indent]] = close_length
-          walk_blocks(
-            text, origins, lines, marks, opaque, index + 1, close_line, found, block_lines,
-          )
+          walk_blocks(text, origins, lines, marks, opaque, index + 1, close_line, found, seen)
         end
         # Any other block's content is left alone: nothing inside it counts as a block.
         index = close_line + 1
@@ -1190,13 +1576,13 @@ module MinosModeration
       "#{sign}#{mantissa}e+#{exponent}"
     end
 
-    private_class_method :submission, :reduce, :steps, :replace, :after_words,
-                         :attribute_values, :code_point, :block_tags, :line_spans,
-                         :line_kinds, :quote_prefix, :fence_content, :fence_closed?,
-                         :html_start, :code_chars, :paragraphs, :block_opener?, :inline_code,
-                         :backtick_run,
-                         :walk_blocks, :bbcode_tag, :inline_close, :block_close,
-                         :plugin_opener?, :block_tag?, :blank_from?, :columns, :trim, :clean,
-                         :spaced, :js_number_string
+    private_class_method :submission, :reduce, :steps, :replace, :after_words, :attribute_values,
+                         :code_point, :block_tags, :line_spans, :line_kinds, :lazy_end?,
+                         :quote_prefix, :fence_content, :fence_closed?, :html_start,
+                         :inline_reading, :inline_bbcode, :paragraphs, :block_opener?, :inline_scan,
+                         :bare_link, :markdown_link, :guard_for, :escaped?, :delimiters?, :flanking,
+                         :spaced_image, :backtick_run, :walk_blocks, :bbcode_tag, :inline_close,
+                         :block_close, :plugin_opener?, :block_tag?, :blank_from?, :columns, :trim,
+                         :clean, :spaced, :js_number_string
   end
 end
