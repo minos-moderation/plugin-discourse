@@ -7,7 +7,7 @@ en:
     minos_gateway_url: "Adres bramy Wergiliusz. Wymagany https; zwykłe http działa tylko z bramą testową na tym samym komputerze (localhost)."
     minos_api_key: "Klucz API forum (nagłówek X-Gateway-Key, zaczyna się od wgb2b_), wydany przez operatora bramy. Wtyczka nie zapisuje go w logach ani nie pokazuje na stronach."
     minos_webhook_secret: "Sekret webhooka, wydrukowany raz przy wydaniu klucza. Służy do sprawdzania podpisu każdej dostawy na adres https://ADRES-TWOJEGO-FORUM%{base_path}/minos/webhook — bez niego żaden werdykt nie zostanie przyjęty."
-    minos_profile: "Profil oceny: forum_adult (forum dla dorosłych) albo forum_teen (forum dla nastolatków). Profil musi być na liście profili klucza."
+    minos_profile: "Profil oceny: forum_adult (forum dla dorosłych) albo forum_teen (forum dla dzieci i młodzieży). Profil musi być na liście profili klucza."
     minos_failure_mode: "Co zrobić z postem, którego brama nie oceniła (odpowiedź nieocenione, brak werdyktu w wyznaczonym czasie, błąd konfiguracji): fail-open — opublikować bez oceny; fail-closed — zostawić moderatorom w kolejce do przeglądu."
     minos_timeout_minutes: "Po ilu minutach bez werdyktu post jest traktowany jak nieoceniony (według ustawienia minos_failure_mode). Najmniej 20: brama próbuje doręczyć werdykt przez 15 minut, a wtyczka zostawia margines; mniejsza wartość zapisana wcześniej działa jak 20."
     minos_censored_action: "Werdykt „ocenzurowane”: publikuj_ocenzurowany — opublikować post z zamaskowanymi fragmentami (█); zostaw_moderatorom — zostawić go w kolejce do przeglądu."

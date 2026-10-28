@@ -6,8 +6,9 @@ publikuje post, publikuje go z zamaskowanymi fragmentami, odrzuca go albo zostaw
 moderatorom — zgodnie z ustawieniami administratora forum. Jest częścią projektu Minos;
 licencja GPL-2.0 (plik `LICENSE`).
 
-> Trasa B2B bramy nie jest jeszcze otwarta produkcyjnie. Do tego czasu wtyczkę można
-> uruchomić z bramą testową (atrapą) z repozytorium `minos-moderation/client-php` — patrz
+> **Stan:** trasa B2B bramy jest otwarta produkcyjnie od 25 października 2026 r. Klucz i
+> sekret webhooka wydaje operator bramy. Bez klucza wtyczkę można wypróbować z bramą
+> testową (atrapą) z repozytorium `minos-moderation/client-php` — patrz
 > `docs/development.md`.
 
 ## Jak to działa
@@ -36,7 +37,11 @@ licencja GPL-2.0 (plik `LICENSE`).
    post z werdyktem `ocenzurowane` zostaje moderatorom (ustawienie, post dłuższy niż 3000
    znaków, maskowania nie da się nanieść, zapis się nie udał), druga notatka pokazuje
    tekst wysłany do oceny z fragmentami zamaskowanymi przez bramę (`█`), żeby moderator
-   widział, co brama chciała ukryć.
+   widział, co brama chciała ukryć. Notatki zapisuje użytkownik systemowy jako notatki
+   zgłoszenia (`ReviewableNote`), które ma bieżący Discourse; na wersji bez nich wtyczka
+   działa tak samo, ale notatek nie ma — o decyzji świadczy wtedy tylko stan zgłoszenia
+   (opublikowane, odrzucone, czeka). Notatka dłuższa niż 2000 znaków jest skracana, a
+   notatka, której nie udało się zapisać, zostawia tylko wpis w logu.
 
 Kilka zasad, które zawsze obowiązują:
 
@@ -94,6 +99,11 @@ przekierowaniami.
              - git clone https://github.com/minos-moderation/plugin-discourse.git minos-moderation
    ```
 
+   To instalacja z gałęzi `main` — **stan przejściowy** do pierwszego wydania wtyczki
+   (tagu `v0.1.0`): przy każdym `./launcher rebuild app` forum pobiera wtedy najnowszy
+   stan `main`. Po wydaniu instrukcja wskaże instalację z tagu
+   (`git clone --branch v0.1.0 …`), a aktualizacja będzie zmianą tagu w tym wierszu.
+
 2. Przebuduj kontener:
 
    ```bash
@@ -120,7 +130,7 @@ przekierowaniami.
 | `minos_gateway_url` | `https://gateway.wergiliusz.app` | Adres bramy. Wymagany `https`; zwykłe `http` działa tylko z atrapą bramy na tym samym komputerze (`localhost`). |
 | `minos_api_key` | puste | Klucz forum (nagłówek `X-Gateway-Key`). Pole tajne: nie trafia do logów ani na strony. |
 | `minos_webhook_secret` | puste | Sekret, którym brama podpisuje dostawy. Bez niego żaden werdykt nie zostanie przyjęty. Pole tajne. |
-| `minos_profile` | `forum_adult` | Profil oceny: `forum_adult` (forum dla dorosłych) albo `forum_teen` (forum dla nastolatków). Musi być na liście profili klucza. |
+| `minos_profile` | `forum_adult` | Profil oceny: `forum_adult` (forum dla dorosłych) albo `forum_teen` (forum dla dzieci i młodzieży). Musi być na liście profili klucza. |
 | `minos_failure_mode` | `fail-closed` | Co zrobić z postem bez oceny: `fail-open` — opublikować, `fail-closed` — zostawić moderatorom. |
 | `minos_timeout_minutes` | `20` | Po ilu minutach bez werdyktu post jest traktowany jak nieoceniony. Najmniej 20: brama próbuje doręczać werdykt przez 15 minut, a wtyczka zostawia margines. Mniejsza wartość zapisana we wcześniejszej wersji działa jak 20. |
 | `minos_censored_action` | `publikuj_ocenzurowany` | Werdykt `ocenzurowane`: `publikuj_ocenzurowany` albo `zostaw_moderatorom`. |
@@ -179,6 +189,11 @@ konfiguracji: post przechodzi w tryb awarii, a pulpit administratora pokazuje ko
 wyczerpanym limicie dobowym i przy przeciążeniu bramy pulpit administratora pokazuje, do
 której godziny (UTC) brama nie przyjmuje postów; komunikat znika o tej godzinie albo po
 pierwszej przyjętej wysyłce.
+
+Jeśli werdyktu, który przyszedł, nie da się zastosować (np. przez chwilowy błąd bazy),
+wtyczka ponawia próbę co 5 minut, a po **24 godzinach** rezygnuje: post zostaje w stanie,
+w jakim był (wstrzymany czeka na moderatora, opublikowany zostaje opublikowany), z
+notatką „werdyktu nie udało się zastosować przez dobę”.
 
 Wyłączenie wtyczki niczego nie publikuje ani nie usuwa: wstrzymane posty zostają w
 kolejce przeglądu dla moderatorów.
@@ -258,7 +273,10 @@ Do bramy trafia, dla każdego wstrzymanego posta:
 Wtyczka **nigdy** nie wysyła danych autora — adresu e-mail, adresu IP, identyfikatora ani
 nazwy użytkownika — ani wiadomości prywatnych. Klucz trafia wyłącznie do nagłówka żądania do
 bramy; ani klucz, ani sekret nie są zapisywane w logach ani pokazywane na stronach. W
-logach Discourse wtyczka zapisuje tylko numer zgłoszenia, status HTTP i kod błędu bramy.
+logach Discourse wtyczka zapisuje ostrzeżenia z numerem zgłoszenia, statusem HTTP i kodem
+błędu bramy, czasem do ponowienia, nazwą kroku, który się nie udał, i nazwą klasy błędu
+(np. `ActiveRecord::RecordInvalid`) — nigdy treści komunikatu błędu, treści posta, ciała
+żądania ani dostawy, klucza ani sekretu.
 
 ### Co wtyczka przechowuje i jak długo
 

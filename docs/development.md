@@ -391,8 +391,11 @@ was published unchecked. Delete it (keep the tag) and re-run the failed jobs. A 
 check publishes nothing: delete the tag, fix `main`, start again from step 1. By hand:
 `.github/scripts/check-release-version.sh v0.1.0` from the repository's root.
 
-The repository is private today: a forum cannot `git clone` it without credentials until
-it is made public.
+The repository is public, so a forum clones it without credentials. Until the first tag
+(`v0.1.0`, which the owner creates) the README installs from `main` and says that this is
+an interim state; once the tag exists, the install line names it
+(`git clone --branch v0.1.0 …`), so a forum takes nothing its administrator did not
+choose.
 
 Nothing in this repository enforces that only the owner tags (the session refusal lives
 outside GitHub): the owner should add a tag ruleset on `v*` that only they may bypass, or
