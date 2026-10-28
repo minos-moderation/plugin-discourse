@@ -97,5 +97,14 @@
   {"name": "an image by a collapsed reference", "raw": "Ty ![x][]kurwa tu\n\n[x]: https://e.example/i.png", "sent": "Ty x kurwa tu\n\n[x]: https://e.example/i.png", "reader": "Ty x kurwa tu"},
   {"name": "an image by a shortcut reference", "raw": "Ty ![x]kurwa tu\n\n[x]: https://e.example/i.png", "sent": "Ty x kurwa tu\n\n[x]: https://e.example/i.png", "reader": "Ty x kurwa tu"},
   {"name": "an image by reference to a label nobody defined", "raw": "Ty ![x][2]kurwa tu\n\n[1]: https://e.example/i.png", "sent": "Ty ![x][2]kurwa tu\n\n[1]: https://e.example/i.png", "reader": "Ty ![x][2]kurwa tu"},
-  {"name": "brackets in an image's alt text, not a link", "raw": "Ty ![a [b] ku](https://e.example/i.png)rwa jedna", "sent": "Ty ![a [b] ku](https://e.example/i.png)rwa jedna", "reader": "Ty a [b] ku rwa jedna"}
+  {"name": "brackets in an image's alt text, not a link", "raw": "Ty ![a [b] ku](https://e.example/i.png)rwa jedna", "sent": "Ty ![a [b] ku](https://e.example/i.png)rwa jedna", "reader": "Ty a [b] ku rwa jedna"},
+  {"name": "a fence ends a definition's label line", "raw": "[1]:\n```\n<i class=\"SLOWO\">x</i> <!-- KOMENTARZ_W_KODZIE -->\n```", "sent": "[1]:\n\n<i class=\"SLOWO\">x</i> <!-- KOMENTARZ_W_KODZIE -->", "reader": "[1]:\n<i class=\"SLOWO\">x</i> <!-- KOMENTARZ_W_KODZIE -->"},
+  {"name": "a long fence ends a definition's label line", "raw": "Tekst\n\n[a]:\n````\n<x-SLOWO> widoczne\n````", "sent": "Tekst\n\n[a]:\n\n<x-SLOWO> widoczne", "reader": "Tekst\n[a]:\n<x-SLOWO> widoczne"},
+  {"name": "a BBCode block ends a definition's label line", "raw": "Ty [ku][1]rwa jedna\n\n[1]:\n[quote]\nx\n[/quote]", "sent": "Ty [ku][1]rwa jedna\n\n[1]:\n\nx", "reader": "Ty [ku][1]rwa jedna\n[1]:\n:\nx"},
+  {"name": "a list item ends a definition's label line", "raw": "Ty [ku][1]rwa jedna\n\n[1]:\n- x", "sent": "Ty [ku][1]rwa jedna\n\n[1]:\n- x", "reader": "Ty [ku][1]rwa jedna\n[1]:\nx"},
+  {"name": "a table ends a definition's label line", "raw": "Ty [ku][1]rwa jedna\n\n[1]:\n| a | b |\n|---|---|", "sent": "Ty [ku][1]rwa jedna\n\n[1]:\n| a | b |\n|---|---|", "reader": "Ty [ku][1]rwa jedna\n[1]:\na\nb"},
+  {"name": "a definition in a list item", "raw": "Ty [ku][1]rwa jedna\n\n- [1]:\n  https://e.example", "sent": "Ty kurwa 1 jedna\n\n- [1]:\n  https://e.example", "reader": "Ty kurwa jedna"},
+  {"name": "an empty list item ends a definition's label line", "raw": "Ty [ku][1]rwa jedna\n\n[1]:\n-", "sent": "Ty [ku][1]rwa jedna\n\n[1]:\n-", "reader": "Ty [ku][1]rwa jedna\n[1]:"},
+  {"name": "a table without spaces ends a definition's label line", "raw": "Ty [ku][1]rwa jedna\n\n[1]:\n|a|b|\n|-|-|", "sent": "Ty [ku][1]rwa jedna\n\n[1]:\n|a|b|\n|-|-|", "reader": "Ty [ku][1]rwa jedna\n[1]:\na\nb"},
+  {"name": "a definition only at the start of a line", "raw": "Tekst [a]: https://e.example\n\nTy [ku][a]rwa jedna", "sent": "Tekst [a]: https://e.example\n\nTy [ku][a]rwa jedna", "reader": "Tekst [a]: https://e.example\nTy [ku][a]rwa jedna"}
 ]

@@ -96,12 +96,15 @@ reader can see is dropped; where removing something is not certain, more is sent
   word the link ends in, so a link inside a word (`Ty [ku](…)rwa`) never splits it:
   inline (`[t](u "x")`, `[t](<u>)`), full (`[t][l]`), collapsed (`[t][]`) and shortcut
   (`[t]`) links, a reference one only where the post defines its label (in any case; a
-  definition's address may stand on the next line), as markdown-it reads them, also
+  definition, also in a list item, may have its address on the next line, unless that
+  line starts a block that ends it: a fence, a break, a heading, a list item, a
+  blockquote, an HTML or BBCode block, a table), as markdown-it reads them, also
   inside brackets that are not a link. An image (inline or by reference, read the same
   way; `[…]` after a `!` is never a link) keeps its alt text and title in its place,
-  apart from the words around it; a reference's label follows the next word. A lone or escaped marker (`\[`, `\&`) a reader
-  sees as it is written stays, so that it never joins two words. A quote leaves the
-  title Discourse shows, a details block its summary, each on a line of its own.
+  apart from the words around it; a reference's label follows the next word. A lone or
+  escaped marker (`\[`, `\&`) a reader sees as it is written stays, so that it never
+  joins two words. A quote leaves the title Discourse shows, a details block its
+  summary, each on a line of its own.
 - Each line is read as markdown-it's block rules read it (`Text.line_kinds`): fenced code
   (closed only by a fence of at most three spaces, at the top, in a blockquote or in a
   list item, or by the end of its container), indented code (also after a thematic
@@ -367,9 +370,9 @@ Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 - that the Discourse-tier specs added after the first CI run pass as written.
   `text_reader_view_spec.rb` ran against `PrettyText.cook` in CI (runs 40664872308 and
   40673051491): every entry passed but one, which showed that Discourse keeps `title` on
-  `span` (the chat plugin's allow list); `span` is now a tooltip tag. Run 40694521200
-  passed all 93 entries of that time; the 6 added after it (images by reference) have
-  not run there yet;
+  `span` (the chat plugin's allow list); `span` is now a tooltip tag. Run 40696799542
+  passed all 99 entries of that time; the 9 added after it (definitions ended by the
+  block on their next line) have not run there yet;
 - `PublicSuffix.domain` is called as the gem documents it (nil for an invalid name); the
   plugin sends no `link_domains` when the constant is missing;
 - the exact oldest Discourse version with every API above (`ReviewableNote` in
@@ -400,14 +403,15 @@ Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 - The reduction of `tekst` models markdown-it and Discourse's BBCode rules; it is not
   their renderer. It was checked against them (markdown-it 15 with Discourse's
   `bbcode-block.js` and `bbcode-inline.js`, the reader's words taken from an HTML5 tree,
-  a tooltip apart from the words it sits in) on 86 000 random posts of the review's
-  generators: 16 posts lose a word, all of the first limit below. The limits, each with
+  a tooltip apart from the words it sits in) on 118 000 random posts of the review's
+  generators (link references among them): 18 posts lose a word, all of the first limit
+  below. The limits, each with
   its direction ("more": the gateway gets markup or words a reader does not see, never
   a word less; "less": a word a reader sees may reach the gateway split or not at all):
   - **less**: an attribute left open at the end of an HTML block (`<span title="a` with
     its closing quote on the next line) runs on, in the browser, into the following
     blocks, and that tooltip may show text the reduction removes (a comment's, a
-    tag's). 16 of 86 000 fuzz posts, 14 of them from the generator of multi-line
+    tag's). 18 of 118 000 fuzz posts, 14 of them from the generator of multi-line
     titles;
   - **less**: emphasis markers are paired left to right among the markers that can
     open and close, not by markdown-it's whole balancing (its rule of three, nesting),

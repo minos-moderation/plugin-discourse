@@ -221,7 +221,7 @@ module MinosModeration
     # address may stand on the next line: a label alone is read as one too, so that a
     # link to it is read as a link (which sends its words joined, never split).
     REFERENCE =
-      /\A {0,3}\[((?:[^\[\]\\]|\\.)*[^\[\]\\\s](?:[^\[\]\\]|\\.)*)\]:
+      /\A[ ]{0,3}\[((?:[^\[\]\\]|\\.)*[^\[\]\\\s](?:[^\[\]\\]|\\.)*)\]:
        (?:[ \t]*(?:<[^<>\n]*>|[^<\s]\S*)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^()]*\)))?)?[ \t]*\z/x
 
     # A definition's label alone, whose address is on the next line ({REFERENCE_DEST}).
@@ -1012,9 +1012,14 @@ module MinosModeration
       html = nil
       list = nil
       list_depth = 0
-      address = false
+      address = nil
       item_quote = false
       lazy = {}
+      # A label alone that gets no address on its next line is no definition: a paragraph.
+      no_address = lambda do
+        kinds[address[:line]] = :text if address
+        address = nil
+      end
       previous = :blank
       outer = 0
       lines.each_with_index do |(from, to), index|
@@ -1024,6 +1029,7 @@ module MinosModeration
           # is not indented into.
           kinds[index] = :bbcode
           fence = html = nil
+          no_address.call
           list = nil if list && columns(line[/\A[ \t]*/]) < list
           previous = :bbcode
           next
@@ -1067,17 +1073,22 @@ module MinosModeration
         if rest.strip.empty?
           kinds[index] = :blank
           previous = :blank
-          address = false
+          no_address.call
           next
         end
-        # The address of a definition whose label stood alone on the line before.
+        # The address of a definition whose label stood alone on the line before: not a
+        # line that starts a block markdown-it ends a definition at.
         if address
-          address = false
-          if REFERENCE_DEST.match?(rest)
+          below = index + 1 < lines.size ? text[lines[index + 1][0]...lines[index + 1][1]] : nil
+          if depth <= address[:depth] && REFERENCE_DEST.match?(rest) &&
+             !definition_end?(rest, below && quote_prefix(below)[1])
+            address = nil
             kinds[index] = :reference
             previous = :blank
             next
           end
+          no_address.call
+          previous = :text
         end
 
         indent = columns(rest[/\A[ \t]*/])
@@ -1129,9 +1140,9 @@ module MinosModeration
         end
         # A link reference definition, where a paragraph could start: shown as nothing,
         # and no paragraph for the next line to continue.
-        if !item && relative < 4 && previous != :text && REFERENCE.match?(content)
+        if (item || previous != :text) && relative < 4 && REFERENCE.match?(content)
           kinds[index] = :reference
-          address = REFERENCE_LABEL.match?(content)
+          address = REFERENCE_LABEL.match?(content) ? { line: index, depth: depth } : nil
           previous = :blank
           next
         end
@@ -1185,7 +1196,29 @@ module MinosModeration
           else :text
           end
       end
+      no_address.call
       table_rows(text, lines, kinds, lazy)
+    end
+
+    # Whether a line starts a block that ends a link reference definition (markdown-it's
+    # terminators of the reference rule): a fence, a thematic break, a heading, a list
+    # item, an HTML block that may interrupt a paragraph, a BBCode block or a table. A
+    # line indented four columns or more never does.
+    #
+    # @param start [String] the line, without its blockquote markers.
+    # @param below [String, nil] the next line, without its blockquote markers.
+    # @return [Boolean]
+    def self.definition_end?(start, below)
+      return false if columns(start[/\A[ \t]*/]) >= 4
+
+      loose = start.lstrip
+      fence = FENCE_OPEN.match(loose)
+      return true if fence && !(fence[2].start_with?("`") && fence[3].include?("`"))
+      return true if HR.match?(start) || ATX_HEADING.match?(start) || LIST_ITEM.match?(start)
+      return true if html_start(loose, :text) || block_opener?(loose)
+
+      !below.nil? && loose.include?("|") && DELIMITER_ROW.match?(below.strip) &&
+        cell_count(loose) == cell_count(below)
     end
 
     # Marks tables as markdown-it's table rule reads them: a text line with a pipe, over a
@@ -1336,7 +1369,9 @@ module MinosModeration
       lines.each_with_index do |(from, to), index|
         next unless kinds[index] == :reference
 
-        label = REFERENCE.match(quote_prefix(text[from...to]).last)&.[](1)
+        rest = quote_prefix(text[from...to]).last
+        item = LIST_ITEM.match(rest)
+        label = REFERENCE.match(item ? rest[item.end(0)..] : rest)&.[](1)
         reading.refs[reference_key(label)] = true if label
       end
       mark = lambda do |from, to, into|
@@ -1839,14 +1874,14 @@ module MinosModeration
     end
 
     private_class_method :submission, :reduce, :steps, :replace, :after_words, :attribute_values,
-                         :code_point, :block_tags, :line_spans, :line_kinds, :table_rows,
-                         :table_cells, :cell_count, :lazy_end?, :quote_prefix, :fence_content,
-                         :quote_markers, :fence_closed?, :html_start, :inline_reading,
-                         :inline_bbcode, :paragraphs, :block_opener?, :inline_scan, :bare_link,
-                         :markdown_link, :code_spans_within?, :link_shown?, :image_shown?,
-                         :reference_key, :guard_for, :escaped?, :delimiters?, :flanking,
-                         :spaced_image, :backtick_run, :walk_blocks, :bbcode_tag, :inline_close,
-                         :block_close, :plugin_opener?, :block_tag?, :blank_from?, :columns, :trim,
-                         :clean, :spaced, :js_number_string
+                         :code_point, :block_tags, :line_spans, :line_kinds, :definition_end?,
+                         :table_rows, :table_cells, :cell_count, :lazy_end?, :quote_prefix,
+                         :fence_content, :quote_markers, :fence_closed?, :html_start,
+                         :inline_reading, :inline_bbcode, :paragraphs, :block_opener?, :inline_scan,
+                         :bare_link, :markdown_link, :code_spans_within?, :link_shown?,
+                         :image_shown?, :reference_key, :guard_for, :escaped?, :delimiters?,
+                         :flanking, :spaced_image, :backtick_run, :walk_blocks, :bbcode_tag,
+                         :inline_close, :block_close, :plugin_opener?, :block_tag?, :blank_from?,
+                         :columns, :trim, :clean, :spaced, :js_number_string
   end
 end
