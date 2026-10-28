@@ -111,6 +111,14 @@ and the verdict without its masked text, for 30 days. A table without dates
    edited it, or reviewed a flag on it), whose decision stays. A verdict with `wsparcie`
    never hides the post (nor does a mask that cannot be carried out): it is kept, with
    the support note, because `Post#hide!` is a sanction and messages the author.
+   `wsparcie` is an active signal for the moderators whatever the verdict (shared plugin
+   rule A7): a post still held is in their review queue already, with the note; a post
+   that is published — on time (`approve`, `approve_masked`), late (`keep`, `mask`) or
+   kept when a verdict could not be applied — gets a `notify_moderators` flag by the system
+   user (`PostActionCreator.create`, a Polish message naming no content), a pending
+   `ReviewableFlaggedPost` in the same queue. Discourse sends the flag's message to the
+   moderators' group; nothing reaches the author. A post already deleted or hidden gets
+   no flag.
 6. `Sweep` applies `Decision.for_entry` to every entry: the failure mode after
    `minos_timeout_minutes` (never under `Decision::MIN_TIMEOUT_MINUTES`, 20, also for a
    lower value stored before that minimum: Discourse checks `min` only on write), a
@@ -400,6 +408,11 @@ Verified in Discourse's source (`main`, September 2026) or in
 - `Jobs::Base` (`sidekiq_options`), `Jobs::Scheduled` + `every`, `Jobs.enqueue`,
   `Jobs.enqueue_in`;
 - `FinalDestination::HTTP` (Net::HTTP with SSRF checks and pinned addresses);
+- `PostActionCreator.create(user, post, :notify_moderators, message:)` (a
+  `ReviewableFlaggedPost.needs_review!` item and a message to the `moderators` group from
+  the flagger, never to the author; the system user may flag, `User#in_any_groups?`
+  treats it as staff; a hidden post cannot be flagged), `PostActionType.types`
+  (`main`, 2026-10-28);
 - `Post#hide!(post_action_type_id)` with `PostActionType.types[:inappropriate]` (it
   also messages the author and hides a first post's topic), `Post.with_deleted`,
   `Post#version`, `PostRevisor#revise!(editor, fields, skip_validations:, bypass_bump:,
@@ -450,8 +463,6 @@ Not verified (no Discourse checkout here; only CI runs the Discourse tier):
   author Discourse's standard "post hidden" message.
 - Every gateway delivery counts against Discourse's per-IP request limit; bursts get 429
   and rely on the gateway's retries (README, "Limit żądań").
-- `wsparcie` on a published post is a note on a resolved review item, which moderators
-  see only in its history; a more visible alert is a follow-up.
 - Configuration errors reach the admin dashboard through a problem check; on a
   Discourse without `register_problem_check` they reach only the log.
 - The reduction of `tekst` models markdown-it and Discourse's BBCode rules; it is not

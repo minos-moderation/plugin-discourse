@@ -49,6 +49,8 @@ pl_PL:
       no_verdict: "Minos: brak werdyktu."
       reason: "Powód: %{powod}."
       support: "Minos: treść może świadczyć o tym, że autor jest w kryzysie (samookaleczenie). To sygnał, by okazać mu wsparcie, a nie by go karać."
+    flags:
+      support: "Minos: brama oznaczyła ten opublikowany post sygnałem „wsparcie” — jego treść może świadczyć o tym, że autor jest w kryzysie (samookaleczenie). Wtyczka nie ukrywa ani nie usuwa takiego posta i nie pisze do autora; o tym, czy i jak mu pomóc, decyduje moderator."
     actions:
       approve: "Post opublikowano."
       approve_unassessed: "Post opublikowano bez pełnej oceny, zgodnie z ustawieniem fail-open."

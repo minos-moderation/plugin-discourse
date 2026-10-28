@@ -17,6 +17,12 @@ module MinosModeration
   # A post the failure mode published (fail-open) keeps its entry as `auto_published`, so a
   # verdict that still arrives is carried out on the published post (`apply_late`).
   #
+  # `wsparcie` (shared plugin rule A7) is an active signal for the moderators whatever the
+  # verdict: a post still held is in their review queue already, with the note; a post
+  # that is published gets a `notify_moderators` flag from the system user, a new item in
+  # the same queue. Nothing about it ever goes to the author, and such a post is never
+  # rejected or hidden automatically (`Decision`).
+  #
   # The unmasked text is never copied into the plugin's store: the reviewable's history has
   # it, and for a `dane_osobowe` mask it is exactly the personal data the mask removed. The
   # entry keeps its digest only.
@@ -116,6 +122,7 @@ module MinosModeration
           )
         reviewable = ::ReviewableQueuedPost.find_by(id: @id)
         record(reviewable, done, verdict) if reviewable
+        signal_support(published_post(entry["post_id"])) if done.support && done.action == :keep
         finished = entry.merge("verdict" => stored(verdict), "reason" => "apply_stuck")
         close(finished, done.action.to_s)
       end
@@ -161,6 +168,9 @@ module MinosModeration
     def execute(reviewable, entry, decision, verdict)
       done, extra = carry_out(reviewable, decision, verdict)
       record(reviewable, done, verdict)
+      if done.support && %i[approve approve_masked].include?(done.action)
+        signal_support(published_post(reviewable.target_id))
+      end
       finished =
         entry.merge(extra).merge(
           "verdict" => verdict && stored(verdict),
@@ -263,10 +273,40 @@ module MinosModeration
           [decision, {}]
         end
       record(reviewable, done, verdict) if reviewable
+      signal_support(post) if done.support
       close(
         entry.merge(extra).merge("verdict" => stored(verdict), "reason" => done.reason.to_s),
         done.action.to_s,
       )
+    end
+
+    # @param post_id [Integer, nil] a post the plugin published.
+    # @return [Post, nil] it, while it exists.
+    def published_post(post_id)
+      post_id && ::Post.find_by(id: post_id)
+    end
+
+    # Puts the support signal in the moderators' own queue (shared plugin rule A7): a
+    # `notify_moderators` flag by the system user on a published post, with a Polish
+    # message that names no content. Discourse sends that message to the moderators'
+    # group, never to the author. A post already deleted or hidden is a person's decision
+    # and gets none; a flag Discourse refuses leaves the note alone.
+    #
+    # @param post [Post, nil] the published post.
+    # @return [void]
+    def signal_support(post)
+      return if post.nil? || post.deleted_at || post.hidden?
+
+      result =
+        ::PostActionCreator.create(
+          ::Discourse.system_user,
+          post,
+          :notify_moderators,
+          message: translate("minos_moderation.flags.support"),
+        )
+      log("the support flag was not raised") unless result.success?
+    rescue *ACTION_ERRORS, ::RateLimiter::LimitExceeded => e
+      log("raising the support flag raised #{e.class.name}")
     end
 
     # @param post [Post] a post the failure mode published.

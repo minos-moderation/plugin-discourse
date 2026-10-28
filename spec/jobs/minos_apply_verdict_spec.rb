@@ -44,6 +44,53 @@ RSpec.describe Jobs::MinosApplyVerdict do
     reviewable.reviewable_notes.map(&:content)
   end
 
+  # The support flags raised on a post: pending `notify_moderators` items of the review
+  # queue, from the system user.
+  def support_flags(post)
+    ReviewableFlaggedPost
+      .pending
+      .where(target: post)
+      .joins(:reviewable_scores)
+      .where(
+        reviewable_scores: {
+          user_id: Discourse.system_user.id,
+          reviewable_score_type: PostActionType.types[:notify_moderators],
+        },
+      )
+  end
+
+  # How many personal messages a user takes part in.
+  def messages_to(user_id)
+    TopicAllowedUser.where(user_id: user_id).count
+  end
+
+  describe "wsparcie on a published post (shared plugin rule A7)" do
+    it "publishes bezpieczne and raises one pending flag for the moderators, nothing to the author" do
+      support = assessed("bezpieczne", "kategorie" => ["samookaleczenie"], "wsparcie" => true)
+      author = reviewable.target_created_by_id
+      before = messages_to(author)
+      expect_not_enqueued_with(job: :send_system_message) { apply_verdict(support) }
+
+      expect(reviewable).to be_approved
+      post = Post.find(reviewable.target_id)
+      expect(support_flags(post).count).to eq(1)
+      expect(messages_to(author)).to eq(before)
+      expect(post).not_to be_hidden
+    end
+
+    it "flags a post published with its masks too" do
+      masked = sent[:text].sub("world", mask * 5)
+      apply_verdict(assessed("ocenzurowane", "ocenzurowany" => masked, "wsparcie" => true))
+      expect(reviewable).to be_approved
+      expect(support_flags(Post.find(reviewable.target_id)).count).to eq(1)
+    end
+
+    it "raises no flag without wsparcie" do
+      apply_verdict(assessed("bezpieczne"))
+      expect(support_flags(Post.find(reviewable.target_id)).count).to eq(0)
+    end
+  end
+
   it "publishes bezpieczne and notes it" do
     apply_verdict(assessed("bezpieczne"))
     expect(reviewable).to be_approved
@@ -154,6 +201,9 @@ RSpec.describe Jobs::MinosApplyVerdict do
       apply_verdict(assessed("zablokowane", "kategorie" => ["samookaleczenie"], "wsparcie" => true))
       expect(reviewable).to be_pending
       expect(notes.join).to include("wsparcie")
+      # Held, so already in the moderators' queue: no post, no flag.
+      expect(reviewable.target_id).to be_nil
+      expect(ReviewableFlaggedPost.count).to eq(0)
     end
   end
 
@@ -232,12 +282,15 @@ RSpec.describe Jobs::MinosApplyVerdict do
       end
 
       it "never hides the post on zablokowane, notes the signal and does not message the author" do
+        before = messages_to(post.user_id)
         expect_not_enqueued_with(job: :send_system_message) do
           late(assessed("zablokowane", "kategorie" => ["samookaleczenie"], "wsparcie" => true))
         end
         expect(post).not_to be_hidden
         expect(entry).to include("status" => "done", "outcome" => "keep", "reason" => "support")
         expect(notes).to include(support_note)
+        expect(support_flags(post).count).to eq(1)
+        expect(messages_to(post.user_id)).to eq(before)
       end
 
       it "keeps the post visible when the masks cannot be carried onto it" do

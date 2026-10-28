@@ -39,10 +39,13 @@ Kilka zasad, które zawsze obowiązują:
 - **Wtyczka nigdy nie zgaduje werdyktu.** Wartość, której nie zna, traktuje jak
   `nieocenione`.
 - **Sygnał wsparcia.** Gdy brama uzna, że treść może świadczyć o kryzysie autora
-  (samookaleczenie), moderatorzy dostają o tym notatkę. Taki post nigdy nie jest
-  odrzucany ani ukrywany automatycznie — także gdy werdykt przyjdzie po publikacji w
-  trybie `fail-open` — a wtyczka nie wysyła w tej sprawie żadnej wiadomości autorowi. O
-  tym decyduje człowiek.
+  (samookaleczenie, sygnał `wsparcie`), moderatorzy dowiadują się o tym w swojej kolejce
+  przeglądu, jaki by nie był werdykt: post wstrzymany czeka w niej z notatką, a post
+  opublikowany (od razu albo wcześniej, w trybie `fail-open`) dostaje od użytkownika
+  systemowego **flagę „powiadom moderatorów”** z wyjaśnieniem — nowe zgłoszenie w tej
+  samej kolejce (Discourse wysyła wtedy wiadomość do grupy moderatorów). Taki post nigdy
+  nie jest odrzucany, usuwany ani ukrywany automatycznie, a wtyczka nie wysyła w tej
+  sprawie żadnej wiadomości autorowi. O tym decyduje człowiek.
 - **Reguły forum mają pierwszeństwo.** Post, który Discourse i tak wstrzymałby sam (np.
   od nowego użytkownika, ze słowem z listy obserwowanych słów, w kategorii wymagającej
   zatwierdzenia), czeka na moderatora jak zawsze; werdykt Minos jest wtedy tylko
@@ -143,7 +146,8 @@ stosuje: przy `zablokowane` post zostaje **ukryty** (moderator może go przywró
 ukryty, jeśli tak każe `minos_censored_action` albo maskowania nie da się nanieść), a przy
 `bezpieczne` nic się nie zmienia. Jeśli w międzyczasie ktoś już zajął się postem (edycja,
 ukrycie, usunięcie, rozpatrzona flaga), jego decyzja zostaje. Post z sygnałem wsparcia
-nigdy nie jest ukrywany: zostaje widoczny, a moderatorzy dostają notatkę.
+nigdy nie jest ukrywany: zostaje widoczny, a moderatorzy dostają notatkę i flagę w
+kolejce przeglądu.
 
 To samo ustawienie decyduje o postach dłuższych niż 3000 znaków: brama ocenia tylko ich
 początek, więc przy `fail-closed` taki post (jeśli nie został zablokowany) czeka na
