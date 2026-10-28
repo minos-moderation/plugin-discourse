@@ -9,6 +9,10 @@ module MinosModeration
   # another text, or one for an id that is not this plugin's is dropped silently, and the
   # gateway still gets its 200 (contract: "Use `id` to drop a repeat"). A post the failure
   # mode already published still waits: its verdict is carried out on the published post.
+  # So does a post the failure mode held after its time-out, while its review item is
+  # still undecided (shared plugin rule A6, `Decision.held_after_timeout?`): the verdict
+  # is applied as if it had come in time. Once a moderator approved or rejected it, the
+  # verdict is dropped and the entry stays as it was.
   # The verdict is stored with the entry, so the job reads it from there and not from its
   # arguments.
   module Receiver
@@ -26,7 +30,11 @@ module MinosModeration
       taken =
         Store.lock(id) do
           entry = Store.get(id)
-          next false unless entry && WAITING.include?(entry["status"])
+          next false unless entry
+          unless WAITING.include?(entry["status"]) ||
+                   (Decision.held_after_timeout?(entry) && undecided?(id))
+            next false
+          end
           next false unless Decision.verdict_for_entry?(entry, attempt)
 
           received = { "status" => "received", "received_at" => Time.now.to_i }
@@ -38,5 +46,13 @@ module MinosModeration
       ::Jobs.enqueue(:minos_apply_verdict, reviewable_id: id)
       :accepted
     end
+
+    # @param id [Integer] a reviewable's id.
+    # @return [Boolean] whether no one has approved or rejected the held post yet.
+    def self.undecided?(id)
+      ::ReviewableQueuedPost.find_by(id: id)&.pending? == true
+    end
+
+    private_class_method :undecided?
   end
 end

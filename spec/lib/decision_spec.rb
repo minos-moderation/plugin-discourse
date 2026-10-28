@@ -564,6 +564,25 @@ RSpec.describe "MinosModeration::Decision" do
       end
     end
 
+    it "takes a late verdict only for a post the failure mode held after its time-out" do
+      held = { "status" => "done", "outcome" => "leave", "reason" => "timeout" }
+      expect(decision.held_after_timeout?(held)).to be(true)
+      others = [
+        held.merge("outcome" => "approve"),
+        held.merge("reason" => "core_hold"),
+        held.merge("reason" => "edited"),
+        held.merge("reason" => "limit"),
+        held.merge("reason" => "config"),
+        held.merge("reason" => "unassessed"),
+        held.merge("outcome" => "resolved_elsewhere"),
+        held.merge("status" => "auto_published"),
+        held.merge("status" => "received"),
+        nil,
+        {},
+      ]
+      others.each { |entry| expect(decision.held_after_timeout?(entry)).to be(false), entry.inspect }
+    end
+
     it "applies a received verdict again when its job was lost" do
       expect(needs("status" => "received", "received_at" => now - 121)).to eq(:reapply)
       expect(needs("status" => "received", "received_at" => now - 5)).to be_nil

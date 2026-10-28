@@ -85,7 +85,12 @@ and the verdict without its masked text, for 30 days. A table without dates
    `minos_gateway_url` clears both (`Store.forget_refusals`, from `on(:site_setting_changed)`
    in `plugin.rb`): they came for the old key or address.
 3. The webhook verifies and parses the delivery; `Receiver` moves a waiting entry to
-   `received` with the verdict and enqueues `Jobs::MinosApplyVerdict`. The current
+   `received` with the verdict and enqueues `Jobs::MinosApplyVerdict`. A post the
+   failure mode held after its time-out (`done`, `leave`, `timeout`:
+   `Decision.held_after_timeout?`) still waits while its review item is pending (shared
+   plugin rule A6): the late verdict is applied as if it had come in time (an edit in the
+   queue since then only notes it, `edited`); once a moderator approved or rejected the
+   post, the verdict is dropped with a 200 and the entry stays as it was. The current
    attempt's id is taken, and an earlier attempt's when its stored digest equals the
    current attempt's (`digests`, `Decision.verdict_for_entry?`: the same text was
    assessed); a repeat, any later verdict for the same post, an earlier attempt of another

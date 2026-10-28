@@ -451,6 +451,81 @@ RSpec.describe Jobs::MinosApplyVerdict do
     end
   end
 
+  describe "a verdict for a post the failure mode held after its time-out (shared plugin rule A6)" do
+    let(:timeout) { SiteSetting.minos_timeout_minutes * 60 }
+
+    before do
+      now = Time.now.to_i
+      MinosModeration::Store.set(
+        reviewable.id,
+        {
+          "status" => "submitted",
+          "queued_at" => now - timeout - 60,
+          "submitted_at" => now - timeout - 1,
+          "attempts" => 1,
+          "attempt" => 1,
+          "text_digest" => sent[:digest],
+          "digests" => { "1" => sent[:digest] },
+          "truncated" => false,
+          "core_hold" => nil,
+        },
+      )
+      # Fail-closed, the default: the sweeper holds the post for the moderators.
+      Jobs::MinosSweeper.new.execute({})
+      expect(entry).to include("status" => "done", "outcome" => "leave", "reason" => "timeout")
+      expect(reviewable.reload).to be_pending
+    end
+
+    def late_payload(verdict)
+      {
+        "id" => "discourse:#{reviewable.id}.1",
+        "kategorie" => [],
+        "ocenzurowany" => nil,
+        "wsparcie" => false,
+        "wersja" => nil,
+      }.merge(verdict)
+    end
+
+    def deliver_late(verdict)
+      taken = MinosModeration::Receiver.accept(late_payload(verdict))
+      described_class.new.execute(reviewable_id: reviewable.id)
+      reviewable.reload
+      taken
+    end
+
+    it "publishes the post on bezpieczne, as if the verdict had come in time" do
+      expect(deliver_late(assessed("bezpieczne"))).to eq(:accepted)
+      expect(reviewable).to be_approved
+      expect(entry).to include("status" => "done", "outcome" => "approve", "reason" => "verdict")
+    end
+
+    it "follows the settings for any other verdict, as in time" do
+      SiteSetting.minos_blocked_action = "odrzuc"
+      deliver_late(assessed("zablokowane", "kategorie" => ["nekanie"]))
+      expect(reviewable).to be_rejected
+    end
+
+    it "changes nothing once a moderator decided on the post" do
+      reviewable.perform(Discourse.system_user, :reject_post)
+      expect(deliver_late(assessed("bezpieczne"))).to eq(:ignored)
+      expect(reviewable).to be_rejected
+      expect(entry).to include("status" => "done", "outcome" => "leave", "reason" => "timeout")
+    end
+
+    it "only notes the verdict when the post was edited in the queue since" do
+      reviewable.update!(payload: reviewable.payload.merge("raw" => "Zupełnie inny, poprawiony tekst."))
+      deliver_late(assessed("bezpieczne"))
+      expect(reviewable).to be_pending
+      expect(entry).to include("status" => "done", "outcome" => "leave", "reason" => "edited")
+    end
+
+    it "takes no verdict for a post held for another reason" do
+      MinosModeration::Store.set(reviewable.id, entry.merge("reason" => "config"))
+      expect(deliver_late(assessed("bezpieczne"))).to eq(:ignored)
+      expect(reviewable).to be_pending
+    end
+  end
+
   it "applies a verdict once" do
     apply_verdict(assessed("bezpieczne"))
     expect { described_class.new.execute(reviewable_id: reviewable.id) }.not_to change {

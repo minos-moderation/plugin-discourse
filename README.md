@@ -138,7 +138,11 @@ tekstu. O tym, co wtedy, decyduje `minos_failure_mode`:
 
 - **`fail-closed`** (domyślnie) — post czeka w kolejce przeglądu na moderatora, z notatką,
   dlaczego nie został oceniony. Nic nieocenionego nie trafia na forum samo, ale przy
-  dłuższej awarii kolejka rośnie.
+  dłuższej awarii kolejka rośnie. Jeśli post czekał, bo werdykt nie przyszedł w czasie
+  `minos_timeout_minutes`, a werdykt przyjdzie później, gdy nikt jeszcze nie zatwierdził
+  ani nie odrzucił posta, wtyczka stosuje go tak, jakby przyszedł na czas (np.
+  `bezpieczne` publikuje post). Gdy moderator zdążył już zdecydować, werdykt jest
+  pomijany; gdy zmienił treść posta w kolejce, werdykt trafia tylko do notatki.
 - **`fail-open`** — post zostaje opublikowany bez oceny (z notatką w historii zgłoszenia).
   Forum działa płynnie, ale w czasie awarii nic nie jest moderowane. Wyjątek: post, który
   Discourse wstrzymał sam, albo który moderator zmienił w kolejce, zawsze czeka na

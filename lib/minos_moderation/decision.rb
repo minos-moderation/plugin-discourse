@@ -309,6 +309,21 @@ module MinosModeration
       resume.is_a?(Integer) && resume > now && resume <= now + MAX_PAUSE_S ? resume : nil
     end
 
+    # Whether an entry is a post the failure mode held after its time-out, so that a
+    # verdict delivered late still applies to it (shared plugin rule A6): finished as
+    # `leave` with the reason `timeout`. A post the failure mode published is
+    # `auto_published` instead; one Discourse held itself, one a moderator edited, a
+    # refusal, a configuration error or `nieocenione` finished with another reason, and no
+    # verdict is taken for those. Whether the review item is still undecided is the
+    # caller's to check.
+    #
+    # @param entry [Hash{String => Object}, nil] the entry as `Store` keeps it.
+    # @return [Boolean]
+    def self.held_after_timeout?(entry)
+      entry.is_a?(Hash) && entry["status"] == "done" && entry["outcome"] == "leave" &&
+        entry["reason"] == "timeout"
+    end
+
     # Whether a refusal keeps the gateway closed past the post's time-out, so that the
     # failure mode applies at once instead of a retry that could only come too late
     # (shared plugin rule 3(a)). The gateway's `ponow_za_s` is compared as it was given,
