@@ -133,8 +133,8 @@ przekierowaniami.
 ## `fail-open` czy `fail-closed`
 
 Brama może nie ocenić posta: odpowiedź `nieocenione`, brak werdyktu w czasie
-`minos_timeout_minutes`, błąd konfiguracji (np. nieważny klucz) albo post bez żadnego
-tekstu. O tym, co wtedy, decyduje `minos_failure_mode`:
+`minos_timeout_minutes`, błąd konfiguracji (np. nieważny klucz) albo post bez własnego
+tekstu do oceny. O tym, co wtedy, decyduje `minos_failure_mode`:
 
 - **`fail-closed`** (domyślnie) — post czeka w kolejce przeglądu na moderatora, z notatką,
   dlaczego nie został oceniony. Nic nieocenionego nie trafia na forum samo, ale przy
@@ -243,7 +243,14 @@ Do bramy trafia, dla każdego wstrzymanego posta:
   Podpowiedź, którą Discourse pokazuje po najechaniu kursorem (atrybut `title`), oraz
   adres, tytuł i etykieta linku zapisanego w Markdownie idą zaraz po słowie, w którym
   stoją, żeby go nie rozdzielić; innych atrybutów HTML (np. `href` w znaczniku `<a>`) wtyczka nie wysyła.
-  Wysyłane jest **pierwsze 3000 znaków** (limit bramy);
+  Wysyłane jest **pierwsze 3000 znaków** (limit bramy). Post **bez własnego tekstu** —
+  którego widoczna treść to tylko obrazek (także z tekstem alternatywnym albo tytułem),
+  film, załącznik albo link bez widocznego opisu, ewentualnie ze znakami niewidocznymi
+  (np. spacja zerowej szerokości, miękki dywiz) — nie jest wysyłany wcale, nawet z
+  tytułem tematu: brama nie ocenia obrazów, a sam adres nie jest treścią. Taki post
+  przechodzi w tryb awarii (`minos_failure_mode`). Adres wpisany wprost i widoczny dla
+  czytelnika (`https://…`) jest tekstem i jest wysyłany. Tekst alternatywny i tytuł
+  obrazka idą tylko obok innych słów posta;
 - **profil** z ustawienia `minos_profile`;
 - **sygnały antyspamowe**: liczba linków w poście, to, czy to pierwszy post autora, oraz
   do 10 domen, do których prowadzą linki i obrazki (np. `example.com`, bez reszty adresu).

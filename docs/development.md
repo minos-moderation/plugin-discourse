@@ -21,6 +21,7 @@ plugin. The gateway's contract, from the client's side, is `docs/contract.md` in
 | `spec/requests/`, `spec/jobs/`, `spec/integration/` | The Discourse tier (plugin harness) |
 | `spec/fixtures/signature.json` | The gateway's signature vector, a byte-for-byte copy of client-php's `vectors/signature.json` |
 | `spec/fixtures/reader_view.json` | The corpus of posts whose sent text must hold every word a reader sees (both tiers) |
+| `spec/fixtures/no_text.json` | Posts with no text of their own (nothing sent) and controls with text (shared rule F7; both tiers) |
 | `lib/minos_moderation/html_entities.json` | HTML's named character references, the data `Text` decodes them with |
 | `.github/workflows/release.yml` | On a `v*` tag: checks `plugin.rb`'s version against the tag (`.github/scripts/check-release-version.sh`) and creates the GitHub Release |
 
@@ -202,6 +203,22 @@ reader can see is dropped; where removing something is not certain, more is sent
   except in code; decoded characters have no origin, so a mask on one holds the post.
 - Characters invisible by default (`\p{Default_Ignorable_Code_Point}`: a soft hyphen,
   zero-width spaces) go, from the title too.
+- **A post with no text of its own sends nothing** (shared plugin rule F7,
+  `Text.own_text?`): the same analysis is run through `Text::OWN_MARKUP`, `MARKUP`
+  without what is not the post's own text — images (Markdown, `<img>`, `[img]`, uploads,
+  videos and audio, alt texts and titles included), attachments
+  (`[name|attachment](upload://…) (12.3 KB)`), links with no text (`[](…)`), a link's
+  address, title and label, tooltips. When nothing of that is left but `Text::NOT_TEXT`
+  (format and control characters such as U+200B, U+00AD, U+2060, U+FEFF; separators and
+  white space; lone combining marks such as U+034F or U+FE0F; the Hangul and Braille
+  fillers; anything invisible by default), the sent text is empty, title included, and
+  `Submission` applies the failure mode (`no_text`) without a request. A bare address
+  the reader sees (linkify, an autolink, `[url]…[/url]`) is text. An alt text or a title
+  is still sent next to the post's own words (S1), and what is sent for a post with
+  text does not change. When the check raises (`RegexpError`), the post counts as text:
+  more is sent, never less. `spec/fixtures/no_text.json` holds the cases, the S8a
+  review's nine probes among them; both tiers read it, the Discourse one against
+  `PrettyText.cook`.
 
 `spec/fixtures/reader_view.json` is the corpus: `spec/lib/text_spec.rb` checks the sent
 text of each entry and the property "every word a reader sees is a word of the sent

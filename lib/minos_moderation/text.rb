@@ -33,6 +33,13 @@ module MinosModeration
   #   decoded as a browser decodes them, and characters invisible by default (a soft
   #   hyphen, a zero-width space) go.
   #
+  # **A post with no text of its own sends nothing** (shared plugin rule F7): when what a
+  # reader sees of the post, apart from images, videos, attachments, the address of a
+  # link without a visible label and the alt texts, titles and tooltips that only go
+  # next to other words, is invisible characters at most ({own_text?}), the text is empty
+  # and the failure mode decides the post, its title included. A bare address the reader
+  # sees is text. Where that check itself fails, the text is sent: more, never less.
+  #
   # **What comes back.** `ocenzurowany` masks the sent text one `█` per character. Every
   # sent character remembers the title or raw character it came from, so {apply_masks}
   # masks exactly those characters, and refuses (nil) whenever a mask falls on a character
@@ -377,6 +384,16 @@ module MinosModeration
         ops
       end
 
+    # {TAG_PARTS} for {own_text?}: a tag leaves only the line break of a block tag; an
+    # image's alt text and title and a tooltip are not the post's own text.
+    TAG_PARTS_OWN =
+      lambda do |match|
+        BLOCK_TAGS.include?((match[1] || match[3]).downcase) ? [[:text, "\n"]] : []
+      end
+
+    # {LINK_PARTS} for {own_text?}: a link is its visible text only.
+    LINK_TEXT_ONLY = ->(match) { [[:keep, *match.offset(:text)]] }
+
     # A character reference becomes its characters, which have no origin (so a mask on
     # one is refused). Like a browser, a legacy name also decodes without its ";".
     ENTITY_PARTS =
@@ -445,6 +462,38 @@ module MinosModeration
     MD_IMAGE_AT = /\G#{MD_IMAGE}/
     MD_LINK_AT = /\G#{MD_LINK}/
 
+    # A Markdown link with no text at all, `[](https://…)`, which markdown-it shows as an
+    # empty anchor: nothing a reader sees ({own_text?}).
+    EMPTY_LINK = /
+      \[(?<text>)\]
+      \(\s*
+        (?<dest><(?:[^<>\n\\]|\\.)*>|(?:[^()\s\\]|\\.|\((?:[^()\s\\]|\\.)*\))*)
+        (?:\s+(?<title>"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?
+      \s*\)
+    /x
+
+    # An attachment as Discourse's composer writes one, `[name|attachment](upload://…)`
+    # and the file's size after it, `(12.3 KB)`: the file is not text to assess
+    # ({own_text?}).
+    ATTACHMENT = /
+      \[(?<text>[^\[\]\n]*\|attachment)\]
+      \(\s*(?<dest>[^()\s]*)\s*\)
+      (?:[ \t]*\([ \t]*\d[\d.,\u00A0 \t]*[^\s()]{1,16}[ \t]*\))?
+    /xi
+
+    # A BBCode image, `[img]address[/img]`, which Discourse shows as an image: its address
+    # is not text a reader sees ({own_text?}; the full reduction sends it, as written).
+    BBCODE_IMAGE = %r{\[img(?:=[^\]\n]*)?\][^\n]*?\[/img\]}i
+
+    # What does not make a post a text to assess (shared plugin rule F7): format and
+    # control characters (a zero-width space, a soft hyphen, a word joiner, a byte order
+    # mark), separators and white space, combining marks without a letter, and the fillers
+    # that show as blanks (Hangul, Braille), as well as every character invisible by
+    # default. Unicode classes, not `\s` alone, which is ASCII.
+    NOT_TEXT = /
+      [\p{Cf}\p{Z}\p{M}\p{Cc}\s\p{Default_Ignorable_Code_Point}\u115F\u1160\u3164\uFFA0\u2800]
+    /x
+
     # What a backslash escapes in Markdown: ASCII punctuation.
     ESCAPABLE = /[!-\/:-@\[-`{-~]/
 
@@ -511,6 +560,27 @@ module MinosModeration
       [/(\n\n)\n+/, [1]], # runs of blank lines
     ].freeze
 
+    # {MARKUP} as {own_text?} reads it: what a reader sees of the post itself. Images (with
+    # their alt texts and titles), BBCode images, attachments, empty links and a link's
+    # address, title and label go; a tag keeps no alt text or tooltip.
+    OWN_MARKUP =
+      MARKUP
+        .flat_map do |step|
+          pattern, parts, guard = step
+          if parts == [TAG_PARTS]
+            [[pattern, [TAG_PARTS_OWN], guard]]
+          elsif parts == [IMAGE_PARTS]
+            [[pattern, [], guard], [EMPTY_LINK, [], :link]]
+          elsif parts == [LINK_PARTS]
+            [[ATTACHMENT, [], :link], [pattern, [LINK_TEXT_ONLY], guard]]
+          elsif pattern == INLINE_BBCODE
+            [[BBCODE_IMAGE, [], :paired_ends], step]
+          else
+            [step]
+          end
+        end
+        .freeze
+
     # Markdown reduced to the text a reader sees, where that is cheap.
     #
     # @param raw [String, nil] the post's raw Markdown.
@@ -523,8 +593,8 @@ module MinosModeration
     #
     # @param raw [String, nil] the post's raw Markdown.
     # @param title [String, nil] the topic's title, for the first post of a new topic.
-    # @return [Hash{Symbol => Object}] `:text` (at most {MAX_CHARS} characters; empty only
-    #   for a post without any text), `:truncated` (whether characters beyond the limit were
+    # @return [Hash{Symbol => Object}] `:text` (at most {MAX_CHARS} characters; empty for a
+    #   post with no text of its own, title or not: {own_text?}), `:truncated` (whether characters beyond the limit were
     #   left out, so a verdict covers only the beginning) and `:digest` (SHA-256 of the
     #   sent text, to notice a post edited in the queue after it was sent).
     def self.for_submission(raw, title = nil)
@@ -593,16 +663,15 @@ module MinosModeration
     # @param title [String, nil] the topic's title, for a new topic.
     # @return [Array] the characters, their origins (a position in the cleaned raw text;
     #   `-1 - i` for the title's character `i`; nil for made-up characters) and whether
-    #   the text was cut.
+    #   the text was cut; no characters for a post with no text of its own.
     def self.submission(raw, title)
-      chars, origins = reduce(raw)
-      if chars.empty?
-        # Markup only (an image without alt text, say): the raw text is sent rather than
-        # nothing, because an empty item would refuse the whole request.
-        chars = spaced(clean(raw))
-        origins = (0...chars.length).to_a
-        chars, origins = trim(chars, origins)
-      end
+      analysed = analyse(raw)
+      # No text of its own (an image, an attachment, a link without a label, invisible
+      # characters): nothing is sent, not even the title (shared plugin rule F7).
+      return [[], [], false] unless own_text?(*analysed)
+
+      chars, origins, blocks, reading = analysed
+      chars, origins = trim(*steps(MARKUP, chars, origins, blocks: blocks, reading: reading))
       heading = spaced(clean(title))
       # A title is plain text: only the characters a reader does not see go.
       shown = heading.each_index.reject { |i| INVISIBLE.match?(heading[i]) }
@@ -623,6 +692,32 @@ module MinosModeration
     # @param raw [String, nil] the post's raw Markdown.
     # @return [Array(Array<String>, Array<Integer, nil>)] the characters and their origins.
     def self.reduce(raw)
+      chars, origins, blocks, reading = analyse(raw)
+      trim(*steps(MARKUP, chars, origins, blocks: blocks, reading: reading))
+    end
+
+    # Whether a post has text of its own to assess (shared plugin rule F7): any character
+    # that is not {NOT_TEXT} once {OWN_MARKUP} took away what is not the post's own text.
+    # An image, a video, an attachment or a link with no visible label is not; a bare
+    # address the reader sees is. When the check fails (a regular expression gives up),
+    # the post counts as text: more is sent, never less.
+    #
+    # @param chars [Array<String>] {analyse}'s characters, and its origins, blocks and
+    #   reading after them.
+    # @return [Boolean]
+    def self.own_text?(chars, origins, blocks, reading)
+      shown, _origins = steps(OWN_MARKUP, chars, origins, blocks: blocks, reading: reading)
+      shown.any? { |char| !NOT_TEXT.match?(char) }
+    rescue RegexpError
+      true
+    end
+
+    # Reads a post's blocks and inline structure, before any {MARKUP} step.
+    #
+    # @param raw [String, nil] the post's raw Markdown.
+    # @return [Array] the characters (line endings made "\n") and their origins, the
+    #   {block_tags} and the {inline_reading}.
+    def self.analyse(raw)
       chars = spaced(clean(raw))
       source = chars
       origins = (0...chars.length).to_a
@@ -639,8 +734,7 @@ module MinosModeration
         blocks = block_tags(text, origins, lines, kinds, seen)
       end
       reading = inline_reading(text, origins, lines, kinds, seen, source)
-      chars, origins = steps(MARKUP, chars, origins, blocks: blocks, reading: reading)
-      trim(chars, origins)
+      [chars, origins, blocks, reading]
     end
 
     # Runs steps of {MARKUP}'s shape over a text.
@@ -700,6 +794,9 @@ module MinosModeration
         end
       when :paired
         ->(match, at) { (match.begin(0)...match.end(0)).all? { |index| reading.paired[at[index]] } }
+      when :paired_ends
+        # A BBCode tag pair whose two tags Discourse pairs: the text between them is theirs.
+        ->(match, at) { reading.paired[at[match.begin(0)]] && reading.paired[at[match.end(0) - 1]] }
       when :dropped
         ->(match, at) { reading.dropped[at[match.begin(0)]] }
       end
@@ -1873,7 +1970,7 @@ module MinosModeration
       "#{sign}#{mantissa}e+#{exponent}"
     end
 
-    private_class_method :submission, :reduce, :steps, :replace, :after_words, :attribute_values,
+    private_class_method :submission, :reduce, :analyse, :own_text?, :steps, :replace, :after_words, :attribute_values,
                          :code_point, :block_tags, :line_spans, :line_kinds, :definition_end?,
                          :table_rows, :table_cells, :cell_count, :lazy_end?, :quote_prefix,
                          :fence_content, :quote_markers, :fence_closed?, :html_start,
