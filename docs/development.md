@@ -241,6 +241,58 @@ not the plugin's 30 days, and the README names them. Every read-modify-write of 
 `DistributedMutex` per reviewable, so the job, the webhook and the sweeper never apply
 two outcomes to one post.
 
+## Shared plugin rules: compliance
+
+The rules every Minos plugin shares are `docs/plugin-behaviour.md` in
+`minos-moderation/client-php` (shared plugin rule D1); this plugin follows the version at
+the commit CI checks out (`.github/workflows/tests.yml`, e5df7d6, v0.2.0). A change to one
+rule is a decision for every plugin, made there first. The table maps each identifier, with
+its short name copied from the file's index, to the code and the test that implement it
+here, or to `odstępstwo: …` (a deviation) with the issue that closes it.
+`spec/lib/compliance_table_spec.rb` reads the file from `MINOS_CLIENT_PHP` and fails when an
+identifier is missing here (in CI a missing checkout fails too, as for the mock gateway).
+Starting point: the audit's matrix of 2026-10-27, checked again against the code after S8a
+and S8b.
+
+| Id | In short (client-php's index) | Discourse: code and test, or deviation |
+|---|---|---|
+| `F1` | fail-closed by default | `config/settings.yml` (`fail-closed`), `Decision.fail_open?` (anything else is closed); `spec/lib/decision_spec.rb` "never publishes a post without a known verdict unless fail-open is chosen exactly" |
+| `F2` | a time-out of at least 20 minutes | `Decision::MIN_TIMEOUT_MINUTES`, `Decision.timeout_s`, `min: 20`; `spec/repo/settings_yml_spec.rb`, `spec/jobs/minos_sweeper_spec.rb` "waits twenty minutes even when a lower timeout was stored" |
+| `F3` | switched off: 404, and nothing happens | `requires_plugin` (404), `Submission#run`, `Jobs::MinosSweeper`, `Jobs::MinosApplyVerdict` return while disabled; `spec/requests/webhooks_controller_spec.rb` "does not answer while the plugin is disabled", `spec/jobs/minos_sweeper_spec.rb` "does nothing while the plugin is disabled" |
+| `F4` | 401 without a usable secret | `WebhooksController#receive`; `spec/requests/webhooks_controller_spec.rb` "is refused while no webhook secret is set" |
+| `F5a` | retry 429, 5xx, 408, network failures and a 2xx that accepts nothing; only `202` accepts | `Scores.classify`, `Scores.classify_transport`, the shared pause (`Store.pause`, `Decision.pause_until`, `Submission#defer`); `spec/lib/scores_spec.rb` "reads every status by the rule", `spec/jobs/minos_submit_spec.rb` "the pause every post shares after a refusal" |
+| `F5b` | any other 4xx is a configuration error | `Scores.classify`, `Submission#refused` (`Store.record_problem`, the dashboard, the failure mode `config`); `spec/jobs/minos_submit_spec.rb` "a configuration error" |
+| `F5c` | a `ponow_za_s` past the time-out: the failure mode at once | `Decision.refusal_outlasts_timeout?` with the uncapped `ponow_za_s`, `Submission#retry_later`, `#defer`; `spec/lib/decision_spec.rb` "gives the failure mode at once to a refusal that ends after the post's time-out", `spec/jobs/minos_submit_spec.rb` "a daily limit that ends after the post's time-out" |
+| `F5d` | optional: re-send what fail-open published unassessed once the limit renews | odstępstwo: not implemented (optional and off by default; outside minos-moderation/minos#71, no issue yet) |
+| `F6` | a failing row never stops a loop | `Sweep.run` (a `rescue` per entry, logged by step, reviewable and exception class); odstępstwo: no test of a failing entry yet (no issue) |
+| `F7` | no text to assess (a title alone, only an image, a video, an attachment or a link without a label, an image's `alt` notwithstanding), or a failed extraction: the failure mode; a bare URL the reader sees is text | `Text.own_text?`, `Text::OWN_MARKUP`, `Text::NOT_TEXT`, `Submission#run` (`no_text`); `spec/lib/text_spec.rb` "a post with no text of its own", `spec/fixtures/no_text.json`, `spec/lib/mock_gateway_spec.rb`, `spec/integration/text_reader_view_spec.rb`. Odstępstwo: an extraction that raises gives the failure mode only at the time-out (the job fails, the sweeper resends, then times out), not at once (no issue) |
+| `F8` | switched on without a usable configuration: the failure mode; a fresh install is off | `minos_enabled` off by default; no key or an unusable address → `Submission#run` applies `config` at once; `MinosGatewayProblem` on the dashboard; `spec/jobs/minos_submit_spec.rb` "applies the failure mode at once when the key is missing". Odstępstwo: without a webhook secret posts are still sent and reach the failure mode only at the time-out; the notice is on the dashboard, not on every admin page (no issue) |
+| `F9` | switched on again: what waited is re-sent with a fresh time-out | odstępstwo: not implemented — switched on again, the sweeper gives every entry past its time-out the failure mode (no issue) |
+| `S1` | `tekst` is what the reader sees, `title`/`alt` included; nothing hidden is added | `Text.for_submission` ("What `tekst` is" above); `spec/fixtures/reader_view.json` in `spec/lib/text_spec.rb` and `spec/integration/text_reader_view_spec.rb` (`PrettyText.cook`) |
+| `S2` | links, domains, first post; never account data | `Scores.request_body` (`META_KEYS`), `Submission#link_domains`; `spec/lib/scores_spec.rb` "never carries an author's e-mail, IP address or id", `spec/jobs/minos_submit_spec.rb` "sends the text, the profile and two signals with the key, and nothing about the author" |
+| `S3` | an edit of a waiting post is `<id>.<n>`; an older revision's verdict is ignored | `Scores.item_id` (`discourse:<review item>.<attempt>`: the post does not exist while it waits), `Decision.verdict_for_entry?`, `VerdictApplier#changed_since_sent?`; `spec/requests/webhooks_controller_spec.rb` "drops a verdict for an earlier attempt". Odstępstwo: an edit in the queue (only staff can make one) is not sent again: the verdict is not applied (`edited`) and a moderator decides (by the platform; no issue) |
+| `S4a` | above 3000 characters: the beginning is assessed, the decision is `nieocenione` | `Text::MAX_CHARS`, `Decision.for_verdict` (`truncated`); `spec/lib/decision_spec.rb` "a post only partly sent" |
+| `S4b` | the note about a cut post | `minos_moderation.reasons.truncated` in the note; odstępstwo: another wording ("oceniono tylko pierwsze 3000 znaków posta"; no issue) |
+| `S4c` | `ocenzurowane` on a cut post is never applied automatically | `Decision.censored`, `Decision.late` (`truncated`); `spec/lib/decision_spec.rb` "leaves a censored head to the moderators under both modes" |
+| `S5` | a topic's title (a visible reply subject, a poll) is part of `tekst`; a title is never changed | `Text.submission` (title, blank line; a reply has no subject; a `[poll]` is in `raw`); `spec/lib/text_spec.rb` "a new topic's title". Odstępstwo: a mask on the title is carried onto the topic's title (`VerdictApplier#approve_masked`, `#mask`) instead of holding the post (no issue) |
+| `S6` | an edit of a published post is reassessed (after the capacity decision) | odstępstwo: not implemented, as the rule allows until the gateway's capacity decision (K-38, K-44) |
+| `S7` | a post the platform holds is sent and annotated (after the capacity decision) | `NewPostHandler.call` (`core_hold`), `Decision.for_verdict` (`core_hold`: a note, never published); `spec/integration/new_post_handler_spec.rb` "lets Discourse hold a post it holds itself", `spec/jobs/minos_apply_verdict_spec.rb` "only notes the verdict on a post Discourse holds itself" |
+| `A1` | the digest of the sent text is checked before applying | `Submission#run` (`text_digest`, `digests`), `VerdictApplier#changed_since_sent?`, `#acted_on?` (`TextCleaner` normalisation); `spec/jobs/minos_apply_verdict_spec.rb` "leaves a post edited in the queue after it was sent", "still hides a post Discourse normalised on publication" |
+| `A2a` | a mask has the sent length and differs only in `█` | `Text.apply_masks`; `spec/lib/text_spec.rb` (masks), `spec/lib/mock_gateway_spec.rb` |
+| `A2b` | what was sent is what is stored | `Text.apply_masks` (the post must still reduce to the sent text); `spec/lib/text_spec.rb` |
+| `A2c` | the write is checked and read back | `VerdictApplier#stored?` (`reload`); `spec/jobs/minos_apply_verdict_spec.rb` "never approves when the masked text did not persist" |
+| `A2d` | the mask is shown to the moderator | `VerdictApplier#mask_note`; `spec/jobs/minos_apply_verdict_spec.rb` "the gateway's masks shown to the moderators" |
+| `A2e` | never the original instead of a failed mask | `VerdictApplier#approve_masked` (`mask_unmappable`, `action_failed` leave the post); `spec/jobs/minos_apply_verdict_spec.rb` "leaves the post when the masks cannot be carried onto it" |
+| `A3` | fail-open is marked; a late verdict applies | `auto_published`, `VerdictApplier#apply_late`, `Decision.for_late_verdict`; `spec/jobs/minos_apply_verdict_spec.rb` "a late verdict for a post the failure mode published" |
+| `A4` | notifications once, sent by the plugin where approval sends none | `perform(:approve_post)` sends Discourse's own notifications; a late verdict publishes nothing again. Not verified: the "edited" notification a late mask sends the author through `PostRevisor` |
+| `A5` | a hold is the platform's own state | `ReviewableQueuedPost` (`NewPostManager#enqueue`); `spec/integration/new_post_handler_spec.rb` "holds a new reply as a queued post" |
+| `A6` | a late verdict also applies to a post the failure mode held | `Decision.held_after_timeout?`, `Receiver.accept`; `spec/jobs/minos_apply_verdict_spec.rb` "a verdict for a post the failure mode held after its time-out", `spec/requests/webhooks_controller_spec.rb` |
+| `A7` | `wsparcie` is an active signal for moderators, never an automatic removal | `VerdictApplier#signal_support` (a `notify_moderators` flag), `Decision` (never `reject` or `hide` with `wsparcie`); `spec/jobs/minos_apply_verdict_spec.rb` "wsparcie on a published post", `spec/lib/decision_spec.rb` "wsparcie over every combination" |
+| `A8` | the plugin's own data (the original, the verdicts) is kept 30 days; the platform's records follow the forum's rules | `Decision::PURGE_AFTER_S`, `Sweep` (`purge`); the original only in Discourse's records, for staff (`PostRevisor#revise!(…, hidden: true)`); README "Co wtyczka przechowuje i jak długo"; `spec/jobs/minos_sweeper_spec.rb` "forgets a finished entry after thirty days", `spec/jobs/minos_apply_verdict_spec.rb` "keeps the original in a revision staff can see and readers cannot" |
+| `P1` | the archive carries no lock file, tests or mock, and pins the client | n/d: Discourse installs the plugin from its git repository, with no archive, and the plugin runs no client-php code |
+| `D1` | this file is the one source; `CLAUDE.md` points at it, `docs/development.md` maps it | `CLAUDE.md` (one line), this table; `spec/lib/compliance_table_spec.rb` |
+| `D2` | shared compliance scenarios in `scenarios/` | odstępstwo: client-php has no scenarios yet (minos-moderation/minos#44, step 5) |
+
 ## Tests
 
 **Standalone tier** — runs anywhere with Ruby 3.3:
@@ -263,9 +315,11 @@ git clone https://github.com/minos-moderation/client-php.git ../client-php
 MINOS_CLIENT_PHP=../client-php bundle exec rspec spec/lib/mock_gateway_spec.rb
 ```
 
-Without `MINOS_CLIENT_PHP` that group is skipped. CI's `standalone` job checks client-php
-out at a pinned commit of its main (`.github/workflows/tests.yml`, fb8d1ff at present),
-runs `composer install --no-dev` there, sets `MINOS_REQUIRE_MOCK_GATEWAY=1`, which turns
+Without `MINOS_CLIENT_PHP` that group is skipped, and so is
+`spec/lib/compliance_table_spec.rb`, which reads client-php's `docs/plugin-behaviour.md`
+from the same checkout (see "Shared plugin rules: compliance"). CI's `standalone` job
+checks client-php out at a pinned commit of its main (`.github/workflows/tests.yml`,
+e5df7d6 at present), runs `composer install --no-dev` there, sets `MINOS_REQUIRE_MOCK_GATEWAY=1`, which turns
 the skip into a failure, and then reads the JSON report: any pending example, or a
 mock-gateway example that did not pass, fails the job. The Discourse tier keeps the
 group pending: it runs inside Discourse's own test container through the reusable

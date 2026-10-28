@@ -35,9 +35,10 @@ jobs:
         with:
           persist-credentials: false
           repository: minos-moderation/client-php
-          # client-php's main at fb8d1ff, which includes f85c6ed (the mock's masks keep the
-          # sent text's length).
-          ref: fb8d1ffe3be6d1da2f0227c671dfebc44c19554e
+          # client-php's main at e5df7d6 (v0.2.0): the mock (its masks keep the sent text's
+          # length since f85c6ed) and docs/plugin-behaviour.md, the shared plugin rules the
+          # compliance table of docs/development.md is checked against.
+          ref: e5df7d6da76e4327838202f9325c5da8455820b9
           path: tmp/client-php
       - uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f  # v1.335.0
         with:
