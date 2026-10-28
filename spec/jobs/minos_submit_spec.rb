@@ -177,6 +177,9 @@ RSpec.describe Jobs::MinosSubmit do
 
     it "sends nothing more until the limit ends, then forgets it once the gateway accepts" do
       run_job
+      # WebMock counts every request that matches a stub's pattern, whichever stub answered
+      # it: from here on only what is sent after the limit counts.
+      WebMock::RequestRegistry.instance.reset!
       freeze_time(36_001.seconds.from_now)
       later = Time.now.to_i
       MinosModeration::Store.set(
@@ -278,16 +281,24 @@ RSpec.describe Jobs::MinosSubmit do
       stub =
         answer(429, { "kod" => "limit_dobowy_klucza", "komunikat" => "x", "ponow_za_s" => 36_000 })
       run_job
+      expect(stub).to have_been_requested.once
       expect(MinosModeration::Store.pause).to be_present
       expect(MinosModeration::Store.limit).to be_present
+      # WebMock counts every request that matches a stub's pattern, whichever stub answered
+      # it: from here on only what the new key sends counts.
+      WebMock::RequestRegistry.instance.reset!
 
-      SiteSetting.minos_api_key = "wgb2b_inny_klucz_testowy_000000000000"
+      new_key = "wgb2b_inny_klucz_testowy_000000000000"
+      SiteSetting.minos_api_key = new_key
       expect(MinosModeration::Store.pause).to be_nil
       expect(MinosModeration::Store.limit).to be_nil
       answer(202)
       run_for(second)
       expect(entry_of(second)["status"]).to eq("submitted")
-      expect(stub).to have_been_requested.once
+      expect(a_request(:post, endpoint)).to have_been_made.once
+      expect(a_request(:post, endpoint).with(headers: { "X-Gateway-Key" => new_key })).to(
+        have_been_made.once,
+      )
     end
 
     it "sends again once the pause is over, and the next 202 lifts it" do
