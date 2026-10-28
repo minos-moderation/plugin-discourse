@@ -47,6 +47,12 @@ module MinosModeration
     # Seconds after which a submission still marked as being sent is presumed lost.
     STALE_SENDING_S = 120
 
+    # The lowest `minos_timeout_minutes` the plugin works with. The gateway tries to deliver
+    # a verdict for 15 minutes; a shorter wait would give a post the failure mode while its
+    # verdict is still on the way. `config/settings.yml` offers nothing lower, and
+    # {timeout_s} raises a value stored before the minimum was raised.
+    MIN_TIMEOUT_MINUTES = 20
+
     # The decision about one post.
     #
     # - `action`: `:approve` (publish as it is), `:approve_masked` (publish `ocenzurowany`
@@ -121,19 +127,42 @@ module MinosModeration
     # one. A person's decision since the publication stays final; otherwise the verdict
     # is carried out on the published post, as far as a published post allows: `hide`
     # takes it out of view (a moderator can show it again), `mask` edits the masked
-    # fragments in. Nothing here publishes or deletes.
+    # fragments in. Nothing here publishes or deletes. A post with `wsparcie` is never
+    # hidden: hiding is an automatic sanction, and Discourse also messages the author
+    # about it, while `wsparcie` asks for support — the post stays as it is, with the note,
+    # and a person decides (shared plugin rule 9).
     #
     # @param verdict [Hash{String => Object}] a payload read by `WebhookPayload.parse`.
     # @param settings [Hash{String => String}] as in {for_verdict}.
     # @param truncated [Boolean] whether the post was longer than the text sent for it.
     # @param acted [Boolean] whether a person acted on the published post since.
-    # @return [Result] `:keep`, `:mask` or `:hide`.
+    # @return [Result] `:keep`, `:mask` or `:hide`; never `:hide` with `wsparcie`.
     def self.for_late_verdict(verdict, settings, truncated: false, acted: false)
       verdict = {} unless verdict.is_a?(Hash)
       support = verdict["wsparcie"] == true
       return result(:keep, :person_acted, support) if acted
       return result(:keep, :unassessed, support) if verdict["status"] != "ocenione"
 
+      decision = late(verdict, settings, truncated, support)
+      return result(:keep, :support, support) if support && decision.action == :hide
+
+      decision
+    end
+
+    # The seconds without a verdict after which a post gets the failure mode.
+    #
+    # @param minutes [Integer, String, nil] `minos_timeout_minutes` as stored.
+    # @return [Integer] the minutes in seconds, never below {MIN_TIMEOUT_MINUTES}: a value
+    #   saved before the minimum was raised stays in the database, and Discourse checks
+    #   `min` only when a value is written.
+    def self.timeout_s(minutes)
+      [minutes.to_i, MIN_TIMEOUT_MINUTES].max * 60
+    end
+
+    # {for_late_verdict} for an assessed post, before the support rule.
+    #
+    # @return [Result] `:keep`, `:mask` or `:hide`.
+    def self.late(verdict, settings, truncated, support)
       case verdict["kwalifikacja"]
       when "bezpieczne"
         result(:keep, truncated ? :truncated : :verdict, support)
@@ -216,6 +245,6 @@ module MinosModeration
       Result.new(action: action, reason: reason, unassessed: unassessed, support: support)
     end
 
-    private_class_method :censored, :leave, :result
+    private_class_method :censored, :late, :leave, :result
   end
 end

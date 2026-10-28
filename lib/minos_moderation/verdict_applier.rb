@@ -293,7 +293,7 @@ module MinosModeration
       raw = payload["raw"].to_s
       title = payload["title"]
       masked = reviewable && masks_for(raw, title, verdict)
-      return [hide(post, instead(decision, :mask_unmappable, action: :hide)), {}] unless masked
+      return [unmasked(post, decision, :mask_unmappable), {}] unless masked
 
       fields = {
         raw: published_form(masked[:raw]),
@@ -313,9 +313,19 @@ module MinosModeration
           log("masking the published post raised #{e.class.name}")
           false
         end
-      return [hide(post, instead(decision, :action_failed, action: :hide)), {}] unless revised
+      return [unmasked(post, decision, :action_failed), {}] unless revised
 
       [decision, originals(raw, title)]
+    end
+
+    # A published post whose masks could not be edited in: hidden, unless it carries
+    # `wsparcie`, which is never hidden automatically (`Decision.for_late_verdict`).
+    #
+    # @return [Decision::Result] what was done.
+    def unmasked(post, decision, reason)
+      return instead(decision, reason, action: :keep) if decision.support
+
+      hide(post, instead(decision, reason, action: :hide))
     end
 
     # @return [Hash{Symbol => String}, nil] the masked raw and title, or nil when the masks

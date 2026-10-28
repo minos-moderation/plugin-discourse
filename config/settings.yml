@@ -26,9 +26,11 @@ plugins:
     choices:
       - fail-open
       - fail-closed
+  # The minimum is Decision::MIN_TIMEOUT_MINUTES, which Settings.timeout_s also applies to
+  # a value stored before the minimum was raised (spec/repo/settings_yml_spec.rb).
   minos_timeout_minutes:
     default: 20
-    min: 16
+    min: 20
     max: 1440
   minos_censored_action:
     type: enum

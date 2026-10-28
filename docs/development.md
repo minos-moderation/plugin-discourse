@@ -59,9 +59,13 @@ Every Discourse touch point sits in a thin class (`settings.rb`, `store.rb`,
    `auto_published` with the post's id, and a verdict that still arrives goes through
    `Decision.for_late_verdict`: `keep`, `mask` (`PostRevisor#revise!` as the system user)
    or `hide` (`Post#hide!`) — unless a person acted on the post since (deleted, hid,
-   edited it, or reviewed a flag on it), whose decision stays.
+   edited it, or reviewed a flag on it), whose decision stays. A verdict with `wsparcie`
+   never hides the post (nor does a mask that cannot be carried out): it is kept, with
+   the support note, because `Post#hide!` is a sanction and messages the author.
 6. `Sweep` applies `Decision.for_entry` to every entry: the failure mode after
-   `minos_timeout_minutes`, a resubmission of a due retry or of a send stuck for 2 min, a
+   `minos_timeout_minutes` (never under `Decision::MIN_TIMEOUT_MINUTES`, 20, also for a
+   lower value stored before that minimum: Discourse checks `min` only on write), a
+   resubmission of a due retry or of a send stuck for 2 min, a
    second application of a verdict whose job was lost after 2 min, giving up (a note, the
    post left) on a verdict that could not be applied for 24 h, and removal of a `done` or
    `auto_published` entry after 30 days.
@@ -208,7 +212,9 @@ Verified in Discourse's source (`main`, September 2026) or in
 - plugin metadata comments, `enabled_site_setting`, `after_initialize`,
   `register_problem_check` (`lib/plugin/instance.rb`, `lib/plugin/metadata.rb`);
 - `config/settings.yml` keys `default`, `secret: true`, `type: enum` + `choices`,
-  `min`/`max`, and descriptions via `site_settings.<name>` with `%{base_path}`;
+  `min`/`max`, and descriptions via `site_settings.<name>` with `%{base_path}`; `min` is
+  checked only when a value is written (`SiteSettings::TypeSupervisor#to_db_value`), a
+  stored value is read back as it is (`to_rb_value`);
 - the engine and routes pattern, and the `Jobs` inflection of `app/jobs/regular` and
   `app/jobs/scheduled` (`config/initializers/000-zeitwerk.rb`);
 - `NewPostManager.add_handler(priority)`, `manager.enqueue(reason)`,

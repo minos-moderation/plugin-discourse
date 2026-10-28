@@ -33,9 +33,10 @@ module MinosModeration
     end
 
     # @return [Integer] seconds without a verdict after which a post is treated as
-    #   `nieocenione`.
+    #   `nieocenione`; never under `Decision::MIN_TIMEOUT_MINUTES`, also for a value stored
+    #   before that minimum (Discourse checks `min` only when a setting is written).
     def self.timeout_s
-      SiteSetting.minos_timeout_minutes.to_i * 60
+      Decision.timeout_s(SiteSetting.minos_timeout_minutes)
     end
 
     # @return [Boolean] whether posts by moderators and administrators skip the gateway.

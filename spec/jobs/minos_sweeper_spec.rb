@@ -53,6 +53,18 @@ RSpec.describe Jobs::MinosSweeper do
     end
   end
 
+  it "waits twenty minutes even when a lower timeout was stored before the minimum" do
+    # Discourse checks `min` only when a value is written, so a 16 saved earlier stays.
+    allow(SiteSetting).to receive(:minos_timeout_minutes).and_return(16)
+    store("status" => "submitted", "queued_at" => now, "submitted_at" => now - (16 * 60) - 1)
+    sweep
+    expect(entry["status"]).to eq("submitted")
+
+    store("status" => "submitted", "queued_at" => now, "submitted_at" => now - (20 * 60) - 1)
+    sweep
+    expect(entry).to include("status" => "done", "reason" => "timeout")
+  end
+
   it "waits for a post still within the timeout" do
     store("status" => "submitted", "queued_at" => now, "submitted_at" => now - 60)
     sweep

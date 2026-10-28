@@ -40,7 +40,9 @@ Kilka zasad, które zawsze obowiązują:
   `nieocenione`.
 - **Sygnał wsparcia.** Gdy brama uzna, że treść może świadczyć o kryzysie autora
   (samookaleczenie), moderatorzy dostają o tym notatkę. Taki post nigdy nie jest
-  odrzucany automatycznie — o tym decyduje człowiek.
+  odrzucany ani ukrywany automatycznie — także gdy werdykt przyjdzie po publikacji w
+  trybie `fail-open` — a wtyczka nie wysyła w tej sprawie żadnej wiadomości autorowi. O
+  tym decyduje człowiek.
 - **Reguły forum mają pierwszeństwo.** Post, który Discourse i tak wstrzymałby sam (np.
   od nowego użytkownika, ze słowem z listy obserwowanych słów, w kategorii wymagającej
   zatwierdzenia), czeka na moderatora jak zawsze; werdykt Minos jest wtedy tylko
@@ -103,7 +105,7 @@ przekierowaniami.
 | `minos_webhook_secret` | puste | Sekret, którym brama podpisuje dostawy. Bez niego żaden werdykt nie zostanie przyjęty. Pole tajne. |
 | `minos_profile` | `forum_adult` | Profil oceny: `forum_adult` (forum dla dorosłych) albo `forum_teen` (forum dla nastolatków). Musi być na liście profili klucza. |
 | `minos_failure_mode` | `fail-closed` | Co zrobić z postem bez oceny: `fail-open` — opublikować, `fail-closed` — zostawić moderatorom. |
-| `minos_timeout_minutes` | `20` | Po ilu minutach bez werdyktu post jest traktowany jak nieoceniony. Najmniej 16: brama próbuje doręczać werdykt przez 15 minut. |
+| `minos_timeout_minutes` | `20` | Po ilu minutach bez werdyktu post jest traktowany jak nieoceniony. Najmniej 20: brama próbuje doręczać werdykt przez 15 minut, a wtyczka zostawia margines. Mniejsza wartość zapisana we wcześniejszej wersji działa jak 20. |
 | `minos_censored_action` | `publikuj_ocenzurowany` | Werdykt `ocenzurowane`: `publikuj_ocenzurowany` albo `zostaw_moderatorom`. |
 | `minos_blocked_action` | `zostaw_moderatorom` | Werdykt `zablokowane`: `zostaw_moderatorom` albo `odrzuc`. |
 | `minos_skip_staff` | włączone | Posty moderatorów i administratorów publikowane od razu, bez oceny. |
@@ -127,7 +129,8 @@ stosuje: przy `zablokowane` post zostaje **ukryty** (moderator może go przywró
 `ocenzurowane` fragmenty zostają zamaskowane w opublikowanym poście (albo post zostaje
 ukryty, jeśli tak każe `minos_censored_action` albo maskowania nie da się nanieść), a przy
 `bezpieczne` nic się nie zmienia. Jeśli w międzyczasie ktoś już zajął się postem (edycja,
-ukrycie, usunięcie, rozpatrzona flaga), jego decyzja zostaje.
+ukrycie, usunięcie, rozpatrzona flaga), jego decyzja zostaje. Post z sygnałem wsparcia
+nigdy nie jest ukrywany: zostaje widoczny, a moderatorzy dostają notatkę.
 
 To samo ustawienie decyduje o postach dłuższych niż 3000 znaków: brama ocenia tylko ich
 początek, więc przy `fail-closed` taki post (jeśli nie został zablokowany) czeka na
