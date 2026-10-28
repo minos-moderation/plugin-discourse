@@ -434,6 +434,37 @@ RSpec.describe "MinosModeration::Decision" do
       [nil, 0, -1, "36000"].each { |value| expect(outlasts.call(queued, value)).to be(false) }
     end
 
+    it "sends a due entry and no other" do
+      expect(decision.due?({ "status" => "queued", "retry_at" => now }, now: now)).to be(true)
+      expect(decision.due?({ "status" => "queued", "retry_at" => now + 1 }, now: now)).to be(false)
+      stale = { "status" => "sending", "sending_at" => now - 121 }
+      expect(decision.due?(stale, now: now)).to be(true)
+      expect(decision.due?(stale.merge("sending_at" => now - 120), now: now)).to be(false)
+      %w[submitted received done auto_published nieznany].each do |status|
+        expect(decision.due?({ "status" => status, "retry_at" => 0 }, now: now)).to be(false)
+      end
+    end
+
+    it "pauses every post after a refusal, for ponow_za_s or the plugin's own delay" do
+      expect(decision.pause_until(now: now, retry_in: 30, delay: 60)).to eq(now + 30)
+      # The gateway's value is kept beyond the plugin's capped retry pause.
+      expect(decision.pause_until(now: now, retry_in: 36_000, delay: 900)).to eq(now + 36_000)
+      [nil, 0, -5, "30"].each do |value|
+        expect(decision.pause_until(now: now, retry_in: value, delay: 120)).to eq(now + 120)
+      end
+      # Never longer than a day, never shorter than a second.
+      expect(decision.pause_until(now: now, retry_in: 10**9, delay: 60)).to eq(now + 86_400)
+      expect(decision.pause_until(now: now, retry_in: nil, delay: 0)).to eq(now + 1)
+    end
+
+    it "keeps a pause only while it is in force and readable" do
+      expect(decision.paused_until({ "until" => now + 30 }, now: now)).to eq(now + 30)
+      [nil, {}, "x", { "until" => now }, { "until" => now - 1 }, { "until" => "#{now + 30}" },
+       { "until" => now + 86_401 }].each do |pause|
+        expect(decision.paused_until(pause, now: now)).to be_nil, pause.inspect
+      end
+    end
+
     it "applies a received verdict again when its job was lost" do
       expect(needs("status" => "received", "received_at" => now - 121)).to eq(:reapply)
       expect(needs("status" => "received", "received_at" => now - 5)).to be_nil

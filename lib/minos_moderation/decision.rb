@@ -47,6 +47,11 @@ module MinosModeration
     # Seconds after which a submission still marked as being sent is presumed lost.
     STALE_SENDING_S = 120
 
+    # The longest shared pause, in seconds: a day, the longest window the gateway's limits
+    # count in. A `ponow_za_s` beyond it pauses the plugin for a day, so that a malformed
+    # answer can never stop it for longer.
+    MAX_PAUSE_S = 24 * 3600
+
     # The lowest `minos_timeout_minutes` the plugin works with. The gateway tries to deliver
     # a verdict for 15 minutes; a shorter wait would give a post the failure mode while its
     # verdict is still on the way. `config/settings.yml` offers nothing lower, and
@@ -203,6 +208,52 @@ module MinosModeration
 
       earlier = digests[attempt.to_s]
       earlier.is_a?(String) && !earlier.empty? && earlier == digests[current.to_s]
+    end
+
+    # Whether a pending entry is due to be sent: waiting and its retry time has come, or
+    # marked as being sent for longer than {STALE_SENDING_S} (that send was lost).
+    #
+    # @param entry [Hash{String => Object}] the entry as `Store` keeps it.
+    # @param now [Integer] the clock, in seconds.
+    # @return [Boolean]
+    def self.due?(entry, now:)
+      case entry["status"]
+      when "queued"
+        entry["retry_at"].to_i <= now
+      when "sending"
+        now - entry["sending_at"].to_i > STALE_SENDING_S
+      else
+        false
+      end
+    end
+
+    # Until when no post is sent after a refusal (shared plugin rule F5a): a `429` (the
+    # key's limits, the shared ceiling, a full queue), a `5xx`, a network failure or a
+    # `2xx` that accepted nothing closes the gateway for every post, not only for the one
+    # refused, so the next posts wait without a request that could only be refused too.
+    #
+    # @param now [Integer] the clock, in seconds.
+    # @param retry_in [Integer, nil] the refusal's `ponow_za_s`, as the gateway gave it.
+    # @param delay [Integer] the plugin's own pause for the refused post, used without a
+    #   `ponow_za_s` (`Scores.backoff`).
+    # @return [Integer] epoch seconds: now plus `ponow_za_s` (or `delay`), at least one
+    #   second and at most {MAX_PAUSE_S} away.
+    def self.pause_until(now:, retry_in:, delay:)
+      wait = retry_in.is_a?(Integer) && retry_in.positive? ? retry_in : delay.to_i
+      now + wait.clamp(1, MAX_PAUSE_S)
+    end
+
+    # @param pause [Hash{String => Object}, nil] the shared pause as `Store` keeps it
+    #   (`until`, epoch seconds).
+    # @param now [Integer] the clock, in seconds.
+    # @return [Integer, nil] when sending may resume, while the pause is in force; nil
+    #   when there is none, it is over or it cannot be read (an unreadable pause never
+    #   stops the plugin).
+    def self.paused_until(pause, now:)
+      return nil unless pause.is_a?(Hash)
+
+      resume = pause["until"]
+      resume.is_a?(Integer) && resume > now && resume <= now + MAX_PAUSE_S ? resume : nil
     end
 
     # Whether a refusal keeps the gateway closed past the post's time-out, so that the

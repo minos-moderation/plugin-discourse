@@ -19,6 +19,14 @@ after_initialize do
     MinosModeration::NewPostHandler.call(manager)
   end
 
+  # The gateway's pause and limit belong to the key and the address they came for: a new
+  # key or gateway address may send at once.
+  on(:site_setting_changed) do |name, _old_value, _new_value|
+    if %w[minos_api_key minos_gateway_url].include?(name.to_s)
+      MinosModeration::Store.forget_refusals
+    end
+  end
+
   if respond_to?(:register_problem_check)
     register_problem_check(MinosModeration::MinosGatewayProblem)
   end

@@ -140,13 +140,23 @@ początek, więc przy `fail-closed` taki post (jeśli nie został zablokowany) c
 moderatora, a przy `fail-open` jest publikowany według werdyktu dla początku. Post, którego
 początek wymagał maskowania (`ocenzurowane`), zawsze czeka na moderatora — w obu trybach.
 
-Chwilowe przeciążenie bramy (odpowiedzi 429 i 503) nie jest awarią: wtyczka ponawia
-wysyłkę po czasie, który poda brama (najwyżej po 15 minutach), a bez niego po 1, 2, 4…
-minutach. Gdy brama odmawia na dłużej, niż post może czekać na werdykt
-(`minos_timeout_minutes`) — np. po wyczerpaniu dobowego limitu klucza — post od razu
-przechodzi w tryb awarii, bez czekania. Przy wyczerpanym limicie dobowym i przy
-przeciążeniu bramy pulpit administratora pokazuje, do której godziny (UTC) brama nie
-przyjmuje postów; komunikat znika o tej godzinie albo po pierwszej przyjętej wysyłce.
+Wtyczka uznaje post za przyjęty do oceny tylko po odpowiedzi bramy **202**. Chwilowe
+przeciążenie bramy nie jest awarią: po odpowiedzi 429 (limit klucza, wspólny limit bramy,
+pełna kolejka), 503 i każdej innej 5xx, po przekroczeniu czasu połączenia (także 408),
+po błędzie sieci i po odpowiedzi 2xx innej niż 202 wtyczka ponawia wysyłkę po czasie,
+który poda brama, a bez niego po 1, 2, 4… minutach (najwyżej po 15). Na ten sam czas
+(najwyżej dobę) wstrzymuje wysyłkę **wszystkich** postów: kolejne posty czekają do końca
+przerwy, nie wysyłając zapytań, więc pełna kolejka albo wyczerpany limit kosztuje jedno
+odrzucone zapytanie, a nie jedno na post. Pierwsza przyjęta wysyłka kończy przerwę, a
+zmiana klucza (`minos_api_key`) albo adresu bramy (`minos_gateway_url`) kończy ją od razu,
+razem z komunikatem o limicie. Gdy
+brama odmawia na dłużej, niż post może czekać na werdykt (`minos_timeout_minutes`) — np.
+po wyczerpaniu dobowego limitu klucza — post od razu przechodzi w tryb awarii, bez
+czekania i bez zapytania. Każda inna odmowa bramy (inny kod 4xx, przekierowanie) to błąd
+konfiguracji: post przechodzi w tryb awarii, a pulpit administratora pokazuje kod. Przy
+wyczerpanym limicie dobowym i przy przeciążeniu bramy pulpit administratora pokazuje, do
+której godziny (UTC) brama nie przyjmuje postów; komunikat znika o tej godzinie albo po
+pierwszej przyjętej wysyłce.
 
 Wyłączenie wtyczki niczego nie publikuje ani nie usuwa: wstrzymane posty zostają w
 kolejce przeglądu dla moderatorów.
@@ -169,6 +179,13 @@ env:
 
 Werdykt, który mimo ponowień nie dotrze w czasie `minos_timeout_minutes`, trafia do
 ustawienia `minos_failure_mode`.
+
+Wtyczka odpowiada bramie kodem 2xx tylko wtedy, gdy zapisała werdykt. Gdy forum jest w
+trybie **tylko do odczytu** (np. podczas przywracania kopii zapasowej), Discourse odpowiada
+na dostawę kodem 503, a brama ponawia ją przez około 12 minut od przyjęcia posta: werdykt
+doręczony w tym czasie wraca po ponowieniu. Przerwa dłuższa niż około 12 minut gubi
+werdykt — post czeka wtedy do końca czasu `minos_timeout_minutes` i przechodzi w tryb
+awarii. Wyłączona wtyczka odpowiada na dostawy kodem 404.
 
 ## Co wtyczka wysyła, a czego nigdy
 

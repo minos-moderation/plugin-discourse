@@ -44,23 +44,40 @@ Every Discourse touch point sits in a thin class (`settings.rb`, `store.rb`,
    digest, builds the body with `Scores.request_body` (item id
    `discourse:<reviewable id>.<attempt>`, `links`, `author_first_post`, and
    `link_domains` from `Text.link_hosts` reduced with `PublicSuffix.domain`) and POSTs it
-   with `GatewayClient` over `FinalDestination::HTTP`. `Scores.classify` reads the answer:
-   `202` → `submitted`; `429`/`503`/`408`/`5xx`/no answer → `queued` again with
-   `retry_at` (`ponow_za_s`, or 60 s doubling to 15 minutes) and an `enqueue_in`, unless
-   the gateway's `ponow_za_s`, uncapped, ends after the post's time-out
-   (`Decision.refusal_outlasts_timeout?`, shared plugin rule 3(a)): then the failure mode
-   at once, reason `limit`; anything else → a configuration problem for the dashboard and
-   the failure mode. A `429` `limit_dobowy_klucza`, `limit_globalny_b2b` or
-   `kolejka_pelna` (`Scores::LIMITS`) also records `Store.limit` — the state and the time
-   until which the gateway refuses, from the uncapped `ponow_za_s` — which the dashboard
-   shows until that time or the next `202`.
+   with `GatewayClient` over `FinalDestination::HTTP`. `Scores.classify` reads the answer
+   (shared plugin rules F5a, F5b): only `202` accepts, → `submitted`;
+   `429`/`5xx`/`408`/any other `2xx`/no answer → `queued` again with `retry_at`
+   (`ponow_za_s`, or 60 s doubling to 15 minutes) and an `enqueue_in`, unless the
+   gateway's `ponow_za_s`, uncapped, ends after the post's time-out
+   (`Decision.refusal_outlasts_timeout?`, F5c): then the failure mode at once, reason
+   `limit`; any other status (another `4xx`, a redirect) → a configuration problem for the
+   dashboard and the failure mode. Every answer to be retried also records the shared
+   pause `Store.pause` (`Decision.pause_until`: now plus the uncapped `ponow_za_s`, or the
+   refused post's own delay; at most a day), and a never-shortened one: while it is in
+   force `Submission#run` sends nothing, but moves a due post to its end
+   (`retry_at` and an `enqueue_in`), or gives it the failure mode at once (reason `limit`)
+   when the gateway's `ponow_za_s` ends after the post's time-out. A full queue or a spent
+   limit thus costs one refused request, not one per post. A `429`
+   `limit_dobowy_klucza`, `limit_globalny_b2b` or `kolejka_pelna` (`Scores::LIMITS`)
+   also records `Store.limit` — the state and the time until which the gateway refuses,
+   from the uncapped `ponow_za_s` — which the dashboard shows until that time or the next
+   `202`. The next `202` clears the pause too, and a change of `minos_api_key` or
+   `minos_gateway_url` clears both (`Store.forget_refusals`, from `on(:site_setting_changed)`
+   in `plugin.rb`): they came for the old key or address.
 3. The webhook verifies and parses the delivery; `Receiver` moves a waiting entry to
    `received` with the verdict and enqueues `Jobs::MinosApplyVerdict`. The current
    attempt's id is taken, and an earlier attempt's when its stored digest equals the
    current attempt's (`digests`, `Decision.verdict_for_entry?`: the same text was
    assessed); a repeat, any later verdict for the same post, an earlier attempt of another
    text (or of an entry written before per-attempt digests) and a foreign id are dropped
-   with a 200.
+   with a 200. Only a stored verdict gets a `2xx` (the gateway takes any `2xx` as
+   delivered and keeps no copy): a disabled plugin answers 404 (`requires_plugin`), and a
+   read-only forum (`Discourse.enable_readonly_mode`, a read-only database) answers 503
+   before the action runs (`ApplicationController#block_if_readonly_mode` raises
+   `Discourse::ReadOnly` for every request but `GET` and `HEAD`). The gateway retries a
+   failed delivery with a growing backoff for about 12.5 minutes after it accepted the
+   post; a read-only spell longer than that loses the verdict, and the post waits for
+   `minos_timeout_minutes` and the failure mode.
 4. `VerdictApplier#apply_verdict` asks `Decision.for_verdict` what to do and does it
    through the reviewable: `perform(system user, :approve_post)`, `update_fields` of the
    queued `raw` (and `title`), a `reload` that must read the masks back exactly, followed
@@ -326,6 +343,8 @@ Verified in Discourse's source (`main`, September 2026) or in
 `discourse-plugin-skeleton`:
 
 - plugin metadata comments, `enabled_site_setting`, `after_initialize`,
+  `on(:site_setting_changed)` (`Plugin::Instance#on`, called only while the plugin is
+  enabled; the event is triggered by every site setting change, with its name),
   `register_problem_check` (`lib/plugin/instance.rb`, `lib/plugin/metadata.rb`);
 - `config/settings.yml` keys `default`, `secret: true`, `type: enum` + `choices`,
   `min`/`max`, and descriptions via `site_settings.<name>` with `%{base_path}`; `min` is
@@ -358,7 +377,11 @@ Verified in Discourse's source (`main`, September 2026) or in
   (200) and `max_reqs_per_ip_mode` (`block`) in `config/discourse_defaults.conf`;
 - `public_suffix` in Discourse's `Gemfile.lock` (through `addressable`);
 - `ApplicationController` filters `verify_authenticity_token`, `check_xhr`,
-  `redirect_to_login_if_required`, `preload_json`, and `requires_plugin`;
+  `redirect_to_login_if_required`, `preload_json`, and `requires_plugin` (a disabled
+  plugin raises `PluginDisabled`, answered 404); `block_if_readonly_mode`
+  (`ReadOnlyMixin`: every request but `GET`/`HEAD` raises `Discourse::ReadOnly` while
+  `Discourse.readonly_mode?`, answered 503) and `Discourse.enable_readonly_mode` /
+  `disable_readonly_mode` (`main`, 2026-10-28);
 - spec helpers `fab!`, `expect_enqueued_with`, `track_log_messages`, the
   `reviewable_queued_post` and `reviewable_queued_post_topic` fabricators, WebMock with
   `allow_localhost`;
