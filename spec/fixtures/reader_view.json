@@ -11,7 +11,7 @@
   {"name": "a closed quote shows its title only", "raw": "[quote=\"Kasia, post:1, topic:2\"]\ncytat\n[/quote]\nodpowiedź", "sent": "Kasia\n\ncytat\n\nodpowiedź", "reader": "Kasia:\ncytat\nodpowiedź"},
   {"name": "a collapsed section", "raw": "[details=\"Podsumowanie\"]\nukryta treść\n[/details]", "sent": "Podsumowanie\nukryta treść", "reader": "Podsumowanie\nukryta treść"},
   {"name": "an image's alt text", "raw": "Zobacz ![alt obrazka|690x388](upload://abc.png) tu", "sent": "Zobacz alt obrazka tu", "reader": "Zobacz alt obrazka tu"},
-  {"name": "a title attribute the sanitizer removes", "raw": "<span title=\"SLOWO_W_TITLE\">x</span>", "sent": "x", "reader": "x"},
+  {"name": "a span's title, which Discourse keeps as a tooltip", "raw": "<span title=\"SLOWO_W_TITLE\">x</span>", "sent": "x SLOWO_W_TITLE", "reader": "x\nSLOWO_W_TITLE"},
   {"name": "a tag shown as code", "raw": "`<span title=\"SLOWO_W_KODZIE\">x</span>`", "sent": "<span title=\"SLOWO_W_KODZIE\">x</span>", "reader": "<span title=\"SLOWO_W_KODZIE\">x</span>"},
   {"name": "a poll's question and options", "raw": "[poll type=regular]\n# Pytanie ankiety\n* Opcja pierwsza\n* Opcja druga\n[/poll]", "sent": "[poll type=regular]\nPytanie ankiety\n* Opcja pierwsza\n* Opcja druga\n[/poll]", "reader": "Pytanie ankiety\nOpcja pierwsza\nOpcja druga"},
   {"name": "a line starting with backticks that is no fence", "raw": "Odpowiedź.\n```Ty SLOWO_UKRYTE` i reszta zdania\nkoniec", "sent": "Odpowiedź.\nTy SLOWO_UKRYTE` i reszta zdania\nkoniec", "reader": "Odpowiedź.\n```Ty SLOWO_UKRYTE` i reszta zdania\nkoniec"},
@@ -22,5 +22,6 @@
   {"name": "an escaped HTML tag is text", "raw": "\\<b title=\"SLOWO_ESC\">x</b>", "sent": "\\<b title=\"SLOWO_ESC\">x", "reader": "<b title=\"SLOWO_ESC\">x"},
   {"name": "a tooltip inside a word", "raw": "zak<abbr title=\"skrót\">a</abbr>zane i dalej", "sent": "zakazane skrót i dalej", "reader": "zakazane i dalej skrót"},
   {"name": "a code span inside a word, trimmed as markdown-it trims it", "raw": "zak` azane `", "sent": "zakazane", "reader": "zakazane"},
-  {"name": "a comment shown as code", "raw": "`zak<!-- SLOWO_W_KOMENTARZU -->azane`", "sent": "zak<!-- SLOWO_W_KOMENTARZU -->azane", "reader": "zak<!-- SLOWO_W_KOMENTARZU -->azane"}
+  {"name": "a comment shown as code", "raw": "`zak<!-- SLOWO_W_KOMENTARZU -->azane`", "sent": "zak<!-- SLOWO_W_KOMENTARZU -->azane", "reader": "zak<!-- SLOWO_W_KOMENTARZU -->azane"},
+  {"name": "a title the sanitizer removes", "raw": "<div title=\"SLOWO_W_DIV\">x</div> dalej", "sent": "x\n dalej", "reader": "x\ndalej"}
 ]

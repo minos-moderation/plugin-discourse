@@ -107,10 +107,12 @@ reader can see is dropped; where removing something is not certain, more is sent
   header or another BBCode block. Elsewhere it is sent as written, attribute included.
 - Outside code, HTML tags (markdown-it's grammar, an escaped `\<` excepted) go: a block
   tag leaves a line break, an `<img>` its alt text and title in its place, and a tooltip
-  Discourse's sanitizer keeps (`title` of `a`, `abbr`, `summary`) follows the word it
-  is on, so it never splits it. An HTML comment goes with its text. No other attribute
-  is sent: the sanitizer removes it or a reader does not see it (an `href`). What is
-  not sent does not count toward the 3000 characters.
+  Discourse's sanitizer keeps (`title` of `a` and `abbr` by its default allow list, of
+  `summary` by the details plugin, of `span` by the chat plugin) follows the word it is
+  on, so it never splits it. An HTML comment goes with its text. No other attribute is
+  sent: the sanitizer removes it or a reader does not see it (an `href`). What is not
+  sent does not count toward the 3000 characters. A plugin that allows `title` on
+  another tag would need that tag in `Text::TOOLTIP_TAGS`.
 - Character references are decoded as a browser decodes them (`html_entities.json`, the
   HTML standard's named references, generated from Python's `html.entities.html5`),
   except in code; decoded characters have no origin, so a mask on one holds the post.
@@ -337,10 +339,10 @@ Verified in Discourse's source (`main`, September 2026) or in
 Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 
 - that the Discourse-tier specs added after the first CI run pass as written.
-  `text_reader_view_spec.rb` passed against `PrettyText.cook` in CI (run 40664872308) on
-  its first 15 entries; the entries added since (fences, a table header, an escaped tag,
-  a tooltip, a trimmed code span, a comment in code) were checked locally against
-  markdown-it 15 with Discourse's `bbcode-block.js`, not against `PrettyText.cook`;
+  `text_reader_view_spec.rb` ran against `PrettyText.cook` in CI (runs 40664872308 and
+  40673051491): every entry passed but one, which showed that Discourse keeps `title` on
+  `span` (the chat plugin's allow list); `span` is now a tooltip tag. The entry with a
+  `div` title, added after that, has not run there yet;
 - `PublicSuffix.domain` is called as the gem documents it (nil for an invalid name); the
   plugin sends no `link_domains` when the constant is missing;
 - the exact oldest Discourse version with every API above (`ReviewableNote` in

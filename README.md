@@ -188,9 +188,9 @@ Do bramy trafia, dla każdego wstrzymanego posta:
   tytułach obrazków, żeby nie dało się niczego w nich ukryć. Kod (w blokach i między
   grawisami) idzie tak, jak jest zapisany, bo tak go widzi czytelnik. `[quote=…]`,
   którego Discourse nie pokazuje jako cytatu (np. w środku linii albo bez zamknięcia),
-  idzie dosłownie. Podpowiedź (atrybut `title` linku albo skrótu) idzie zaraz po
-  słowie, którego dotyczy; innych atrybutów HTML, np. adresów linków, wtyczka nie
-  wysyła. Wysyłane jest **pierwsze 3000 znaków** (limit bramy);
+  idzie dosłownie. Podpowiedź, którą Discourse pokazuje po najechaniu kursorem (atrybut
+  `title`), idzie zaraz po słowie, którego dotyczy; innych atrybutów HTML, np. adresów
+  linków, wtyczka nie wysyła. Wysyłane jest **pierwsze 3000 znaków** (limit bramy);
 - **profil** z ustawienia `minos_profile`;
 - **sygnały antyspamowe**: liczba linków w poście, to, czy to pierwszy post autora, oraz
   do 10 domen, do których prowadzą linki i obrazki (np. `example.com`, bez reszty adresu).

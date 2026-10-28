@@ -40,9 +40,9 @@ RSpec.describe "MinosModeration::Text" do
       expect(sent).not_to include("komentarz")
     end
 
-    it "removes HTML tags in a word, and the attributes no reader sees" do
-      raw = %(zak<span title="ukryty tytuł">a</span>zane i <kbd>dalej</kbd>)
-      expect(text.for_submission(raw)[:text]).to eq("zakazane i dalej")
+    it "removes HTML tags in a word, keeping a tooltip after the word" do
+      raw = %(zak<span title="podpowiedź">a</span>zane i <kbd>dalej</kbd>)
+      expect(text.for_submission(raw)[:text]).to eq("zakazane podpowiedź i dalej")
     end
 
     it "sends the raw text of a post that is markup only, rather than nothing" do
@@ -149,7 +149,8 @@ RSpec.describe "MinosModeration::Text" do
       )
       expect(sent(%(zak<abbr title="skrót">a</abbr>zane))).to eq("zakazane skrót")
       expect(sent(%(x<abbr title="k&#117;rwa">y</abbr>))).to eq("xy kurwa")
-      expect(sent("<b>tekst</b> <slowo> <span title=\"ukryte\">z</span>")).to eq("tekst  z")
+      expect(sent("<b>tekst</b> <slowo> <div title=\"ukryte\">z</div>")).to eq("tekst\nz")
+      expect(sent(%(<span title="widoczna">z</span>))).to eq("z widoczna")
     end
 
     it "removes a comment with its text, which no reader sees" do

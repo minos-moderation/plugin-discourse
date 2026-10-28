@@ -22,9 +22,9 @@ module MinosModeration
   #   backticks go;
   # - everywhere else HTML tags and comments go, so that `zak<b>a</b>zane` or
   #   `zak<!-- -->azane` reaches the gateway as the reader's one word: a block tag leaves
-  #   a line break, an `<img>` its alt text and title in its place, a tooltip (`title` of
-  #   a link, an abbreviation, a summary) follows the word it is on; a comment's text and
-  #   the attributes the sanitizer removes, which no reader sees, are not sent;
+  #   a line break, an `<img>` its alt text and title in its place, a tooltip (a `title`
+  #   the sanitizer keeps: {TOOLTIP_TAGS}) follows the word it is on; a comment's text
+  #   and the attributes the sanitizer removes, which no reader sees, are not sent;
   # - single `*` and `_` emphasis markers go, entities are decoded as a browser decodes
   #   them, and characters invisible by default (a soft hyphen, a zero-width space) go.
   #
@@ -258,8 +258,11 @@ module MinosModeration
     # Characters a reader does not see (a soft hyphen, zero-width spaces and joiners).
     INVISIBLE = /\p{Default_Ignorable_Code_Point}/
 
-    # Tags whose `title` Discourse's sanitizer keeps, so that a reader sees it as a tooltip.
-    TOOLTIP_TAGS = %w[a abbr summary].freeze
+    # Tags whose `title` Discourse's sanitizer keeps, so that a reader sees it as a tooltip:
+    # `a[title]` and `abbr[title]` (the default allow list, `allow-lister.js`),
+    # `summary[title]` (the details plugin) and `span[title]` (the chat plugin's
+    # transcripts). An `<img>`'s title is handled with its alt text.
+    TOOLTIP_TAGS = %w[a abbr span summary].freeze
 
     # An HTML tag goes: a block tag leaves a line break, an `<img>` its alt text and title
     # in its place; a tooltip follows the word the tag is in, so it never splits a word
