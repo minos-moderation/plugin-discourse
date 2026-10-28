@@ -13,6 +13,9 @@ en:
     minos_censored_action: "Werdykt „ocenzurowane”: publikuj_ocenzurowany — opublikować post z zamaskowanymi fragmentami (█); zostaw_moderatorom — zostawić go w kolejce do przeglądu."
     minos_blocked_action: "Werdykt „zablokowane”: zostaw_moderatorom — zostawić post w kolejce do przeglądu; odrzuc — odrzucić go."
     minos_skip_staff: "Posty moderatorów i administratorów publikuj od razu, bez wysyłania do oceny."
+    minos_categories: "Kategorie, w których wtyczka wstrzymuje nowe posty i wysyła je do oceny (także w ich podkategoriach). Puste — wszystkie kategorie. Post spoza wybranych kategorii nie jest oceniany wcale: Discourse publikuje go albo wstrzymuje według własnych reguł."
+    minos_exempt_groups: "Grupy, których członków wtyczka nie moderuje: ich nowe posty nie są wstrzymywane ani oceniane (Discourse stosuje do nich własne reguły). Puste — żadna grupa."
+    minos_max_trust_level: "Najwyższy poziom zaufania autora, którego posty wtyczka wstrzymuje i wysyła do oceny. 4 — wszyscy autorzy (domyślnie); np. 1 — tylko nowi i podstawowi użytkownicy. Posty autorów z wyższym poziomem nie są oceniane wcale."
   reviewables:
     reasons:
       minos_pending: "Czeka na ocenę Minos — moderacja postów."

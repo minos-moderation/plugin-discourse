@@ -11,9 +11,11 @@ module MinosModeration
   # queues it and the gateway's verdict only annotates it: the forum's rules stay in
   # force.
   #
-  # Not handled, so published as Discourse decides: the plugin is disabled; the author is
-  # staff (with `minos_skip_staff`), a bot or the system user; the post is a personal
-  # message (Discourse never queues those, and their content is private).
+  # Not handled, so published or held as Discourse decides: the plugin is disabled; the
+  # author is staff (with `minos_skip_staff`), a bot or the system user; the post is a
+  # personal message (Discourse never queues those, and their content is private); the
+  # post is outside the administrator's scope (`minos_categories`, `minos_exempt_groups`,
+  # `minos_max_trust_level`; `Decision.in_scope?`). Nothing about the scope is sent.
   module NewPostHandler
     # Runs after the handlers of other plugins (they are 0 and up) that may still change
     # the post's arguments or refuse it.
@@ -21,6 +23,16 @@ module MinosModeration
 
     # The score reason moderators see (`reviewables.reasons.minos_pending`).
     REASON = :minos_pending
+
+    # The groups every author of a new post belongs to without a membership row:
+    # "everyone" and, where Discourse has it, "logged in users".
+    PSEUDO_GROUPS = [
+      ::Group::AUTO_GROUPS[:everyone],
+      ::Group::AUTO_GROUPS[:logged_in_users],
+    ].compact.freeze
+
+    # How many categories up a subcategory is looked through (Discourse nests three deep).
+    MAX_CATEGORY_DEPTH = 3
 
     # @param manager [NewPostManager] the post being created.
     # @return [NewPostResult, nil] the queued result, or nil to let the next handler and
@@ -50,8 +62,48 @@ module MinosModeration
       user = manager.user
       return false if user.nil? || user.bot? || user.id.to_i <= 0
       return false if Settings.skip_staff? && user.staff?
+      return false if private_message?(manager.args)
 
-      !private_message?(manager.args)
+      in_scope?(manager)
+    end
+
+    # @param manager [NewPostManager] the post being created.
+    # @return [Boolean] whether the post is in the administrator's scope; true whenever
+    #   something cannot be told (`Decision.in_scope?`).
+    def self.in_scope?(manager)
+      scope = Settings.scope
+      chosen = scope["categories"]
+      if chosen.is_a?(Array) && !chosen.empty?
+        # A deleted category's id can never match: the list is the categories that exist,
+        # and a list of none of them moderates every category.
+        scope = scope.merge("categories" => ::Category.where(id: chosen).pluck(:id))
+      end
+      user = manager.user
+      Decision.in_scope?(
+        category_ids: category_ids(manager.args),
+        group_ids: user.group_ids | PSEUDO_GROUPS,
+        trust_level: user.trust_level,
+        scope: scope,
+      )
+    end
+
+    # @param args [Hash] the post's arguments: `topic_id` for a reply, `category` for a new
+    #   topic.
+    # @return [Array<Integer>, nil] the post's category and the ones above it, or nil when
+    #   the category cannot be found.
+    def self.category_ids(args)
+      category =
+        if args[:topic_id].present?
+          ::Topic.find_by(id: args[:topic_id])&.category
+        elsif args[:category].present?
+          ::Category.find_by(id: args[:category])
+        end
+      ids = []
+      while category && ids.size < MAX_CATEGORY_DEPTH
+        ids << category.id
+        category = category.parent_category
+      end
+      ids.empty? ? nil : ids
     end
 
     # @param args [Hash] the post's arguments.
@@ -64,6 +116,6 @@ module MinosModeration
         ::Topic.where(id: topic_id, archetype: ::Archetype.private_message).exists?
     end
 
-    private_class_method :applies_to?, :private_message?
+    private_class_method :applies_to?, :private_message?, :in_scope?, :category_ids
   end
 end

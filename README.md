@@ -57,8 +57,15 @@ Kilka zasad, które zawsze obowiązują:
   werdykt zostanie wtedy pominięty.
 
 Nie są wstrzymywane: posty moderatorów i administratorów (ustawienie `minos_skip_staff`),
-posty botów i systemu oraz **wiadomości prywatne** (Discourse nigdy ich nie kolejkuje, a
-ich treść jest prywatna). Wtyczka nie ocenia **edycji** już opublikowanych postów.
+posty botów i systemu, **wiadomości prywatne** (Discourse nigdy ich nie kolejkuje, a
+ich treść jest prywatna) oraz posty **poza zakresem** wybranym przez administratora
+(ustawienia `minos_categories`, `minos_exempt_groups`, `minos_max_trust_level`). Post
+poza zakresem **nie jest oceniany wcale**: wtyczka niczego o nim nie wysyła ani nie
+zapisuje, a Discourse publikuje go albo wstrzymuje według własnych reguł (np. post
+nowego użytkownika nadal czeka na zatwierdzenie, jeśli tak każe forum). Domyślnie zakres
+obejmuje wszystkie posty. Jeśli zakresu nie da się ustalić (np. kategoria posta nie
+istnieje albo żadna z wybranych kategorii już nie istnieje), post jest moderowany.
+Wtyczka nie ocenia **edycji** już opublikowanych postów.
 
 ## Instalacja
 
@@ -112,6 +119,9 @@ przekierowaniami.
 | `minos_censored_action` | `publikuj_ocenzurowany` | Werdykt `ocenzurowane`: `publikuj_ocenzurowany` albo `zostaw_moderatorom`. |
 | `minos_blocked_action` | `zostaw_moderatorom` | Werdykt `zablokowane`: `zostaw_moderatorom` albo `odrzuc`. |
 | `minos_skip_staff` | włączone | Posty moderatorów i administratorów publikowane od razu, bez oceny. |
+| `minos_categories` | puste (wszystkie) | Kategorie, w których nowe posty są wstrzymywane i oceniane — także w ich podkategoriach. Post z innej kategorii nie jest oceniany wcale. |
+| `minos_exempt_groups` | puste (żadna) | Grupy, których członków wtyczka nie moderuje: ich posty nie są wstrzymywane ani oceniane. |
+| `minos_max_trust_level` | `4` (wszyscy) | Najwyższy poziom zaufania autora, którego posty są wstrzymywane i oceniane; np. `1` — tylko nowi i podstawowi użytkownicy. Posty autorów z wyższym poziomem nie są oceniane wcale. |
 
 ## `fail-open` czy `fail-closed`
 

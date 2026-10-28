@@ -58,6 +58,9 @@ module MinosModeration
     # {timeout_s} raises a value stored before the minimum was raised.
     MIN_TIMEOUT_MINUTES = 20
 
+    # The trust levels Discourse knows (`TrustLevel.valid_range`).
+    TRUST_LEVELS = (0..4).freeze
+
     # The decision about one post.
     #
     # - `action`: `:approve` (publish as it is), `:approve_masked` (publish `ocenzurowany`
@@ -210,6 +213,56 @@ module MinosModeration
       earlier.is_a?(String) && !earlier.empty? && earlier == digests[current.to_s]
     end
 
+    # The administrator's scope as stored, read: which new posts the plugin holds and
+    # sends. An empty list is "every category" or "no group"; a value that cannot be read
+    # is nil, which {in_scope?} ignores, so it never narrows the scope.
+    #
+    # @param categories [String, nil] `minos_categories`: category ids joined by "|".
+    # @param exempt_groups [String, nil] `minos_exempt_groups`: group ids joined by "|".
+    # @param max_trust_level [Integer, String, nil] `minos_max_trust_level`.
+    # @return [Hash{String => Object}] `categories` and `exempt_groups` (Array<Integer> or
+    #   nil), `max_trust_level` (Integer or nil).
+    def self.scope_settings(categories:, exempt_groups:, max_trust_level:)
+      level = Integer(max_trust_level.to_s, 10, exception: false)
+      {
+        "categories" => id_list(categories),
+        "exempt_groups" => id_list(exempt_groups),
+        "max_trust_level" => TRUST_LEVELS.cover?(level) ? level : nil,
+      }
+    end
+
+    # Whether a new post is in the administrator's scope, so that the plugin holds it and
+    # sends it. A post out of scope is not the plugin's at all: Discourse publishes or holds
+    # it by its own rules, nothing is sent and no verdict is ever guessed for it. Whatever
+    # cannot be told fails toward moderation: an unknown category, author's groups or trust
+    # level, or a setting that cannot be read, never takes a post out of scope.
+    #
+    # @param category_ids [Array<Integer>, nil] the post's category and the categories
+    #   above it (a subcategory of a chosen category is in scope); nil when unknown.
+    # @param group_ids [Array<Integer>, nil] the author's groups; nil when unknown.
+    # @param trust_level [Integer, nil] the author's trust level; nil when unknown.
+    # @param scope [Hash{String => Object}] {scope_settings}, its `categories` narrowed to
+    #   the categories that still exist.
+    # @return [Boolean] false only when a readable setting puts the post out: the author's
+    #   trust level is above `max_trust_level`, the author is in an exempt group, or the
+    #   post's category (and every one above it) is outside a non-empty `categories`.
+    def self.in_scope?(category_ids:, group_ids:, trust_level:, scope:)
+      scope = {} unless scope.is_a?(Hash)
+      highest = scope["max_trust_level"]
+      if highest.is_a?(Integer) && trust_level.is_a?(Integer) && trust_level > highest
+        return false
+      end
+
+      exempt = scope["exempt_groups"]
+      return false if exempt.is_a?(Array) && group_ids.is_a?(Array) && (exempt & group_ids).any?
+
+      chosen = scope["categories"]
+      return true unless chosen.is_a?(Array) && !chosen.empty?
+      return true unless category_ids.is_a?(Array) && !category_ids.empty?
+
+      (chosen & category_ids).any?
+    end
+
     # Whether a pending entry is due to be sent: waiting and its retry time has come, or
     # marked as being sent for longer than {STALE_SENDING_S} (that send was lost).
     #
@@ -306,6 +359,15 @@ module MinosModeration
       end
     end
 
+    # @param value [String, nil] ids joined by "|", as Discourse stores a list setting.
+    # @return [Array<Integer>, nil] the ids (empty for an empty value), or nil when a part
+    #   is not a whole number of zero or more (the group "everyone" is 0).
+    def self.id_list(value)
+      parts = value.to_s.split("|").map(&:strip).reject(&:empty?)
+      ids = parts.map { |part| Integer(part, 10, exception: false) }
+      ids.all? { |id| id.is_a?(Integer) && id >= 0 } ? ids.uniq : nil
+    end
+
     # @param settings [Hash{String => String}] as in {for_verdict}.
     # @return [Boolean] whether the administrator chose fail-open; anything else is closed.
     def self.fail_open?(settings)
@@ -337,6 +399,6 @@ module MinosModeration
       Result.new(action: action, reason: reason, unassessed: unassessed, support: support)
     end
 
-    private_class_method :censored, :late, :leave, :result
+    private_class_method :censored, :late, :leave, :result, :id_list
   end
 end

@@ -9,7 +9,7 @@ plugin. The gateway's contract, from the client's side, is `docs/contract.md` in
 | Path | What |
 |---|---|
 | `plugin.rb` | Metadata, `enabled_site_setting :minos_enabled`, the `NewPostManager` handler, the problem check |
-| `config/settings.yml` | The ten settings, all under `plugins:` |
+| `config/settings.yml` | The thirteen settings, all under `plugins:` |
 | `config/locales/` | Server and client strings, Polish, for `pl_PL` and `en` (see "Locales") |
 | `config/routes.rb` | `POST /minos/webhook`, through `MinosModeration::Engine` mounted at `/minos` |
 | `app/controllers/minos_moderation/webhooks_controller.rb` | The receiver: raw body, signature, parse, hand over, 200 |
@@ -36,8 +36,13 @@ Every Discourse touch point sits in a thin class (`settings.rb`, `store.rb`,
 1. `NewPostHandler` (priority -100, after other plugins' handlers) holds the post with
    `manager.enqueue(:minos_pending)`, or lets `NewPostManager.default_handler` hold it when
    Discourse would hold it anyway (then `core_hold` is recorded and the verdict is only a
-   note). It skips a disabled plugin, staff (`minos_skip_staff`), bots and personal
-   messages. `Submission.enqueue` creates the entry and enqueues `Jobs::MinosSubmit`.
+   note). It skips a disabled plugin, staff (`minos_skip_staff`), bots, personal
+   messages and a post outside the administrator's scope (`Decision.in_scope?` over
+   `minos_categories`, a category or one above it; `minos_exempt_groups`;
+   `minos_max_trust_level`): such a post is Discourse's alone, published or held by its
+   rules, with no entry, no request and no verdict. Whatever cannot be told (an unknown
+   category, a setting that does not read as ids, a list whose categories were all
+   deleted) keeps the post in scope; nothing about the scope is sent. `Submission.enqueue` creates the entry and enqueues `Jobs::MinosSubmit`.
 2. `Submission#run` claims the entry (`queued` → `sending`) under `Store.lock` and numbers
    the attempt, reduces the post with `Text.for_submission` (title, blank line, the text
    a reader sees — see "What `tekst` is" below — first 3000 characters), stores the
@@ -349,7 +354,12 @@ Verified in Discourse's source (`main`, September 2026) or in
 - `config/settings.yml` keys `default`, `secret: true`, `type: enum` + `choices`,
   `min`/`max`, and descriptions via `site_settings.<name>` with `%{base_path}`; `min` is
   checked only when a value is written (`SiteSettings::TypeSupervisor#to_db_value`), a
-  stored value is read back as it is (`to_rb_value`);
+  stored value is read back as it is (`to_rb_value`); `type: category_list` and
+  `type: group_list` (ids joined by "|", no check that they exist) and
+  `enum: "TrustLevelSetting"` (0–4), as core's `config/site_settings.yml` uses them;
+  `Group::AUTO_GROUPS` (`everyone` 0, `logged_in_users` 5), `User#group_ids`,
+  `Category#parent_category`, and the `topic_id` / `category` arguments of
+  `NewPostManager` (`post_needs_approval_in_its_category?`) (`main`, 2026-10-28);
 - the engine and routes pattern, and the `Jobs` inflection of `app/jobs/regular` and
   `app/jobs/scheduled` (`config/initializers/000-zeitwerk.rb`);
 - `NewPostManager.add_handler(priority)`, `manager.enqueue(reason)`,

@@ -346,6 +346,105 @@ RSpec.describe "MinosModeration::Decision" do
     end
   end
 
+  describe "the administrator's scope" do
+    def settings(categories: "", groups: "", level: 4)
+      decision.scope_settings(categories: categories, exempt_groups: groups, max_trust_level: level)
+    end
+
+    def covers?(scope, categories: [7], groups: [10, 11], level: 1)
+      decision.in_scope?(
+        category_ids: categories,
+        group_ids: groups,
+        trust_level: level,
+        scope: scope,
+      )
+    end
+
+    it "reads the settings as stored, and nothing it cannot read" do
+      expect(settings).to eq(
+        "categories" => [],
+        "exempt_groups" => [],
+        "max_trust_level" => 4,
+      )
+      expect(settings(categories: "3|5|3", groups: "0|41", level: "2")).to eq(
+        "categories" => [3, 5],
+        "exempt_groups" => [0, 41],
+        "max_trust_level" => 2,
+      )
+      unreadable = settings(categories: "3|x", groups: "-1", level: "9")
+      expect(unreadable).to eq(
+        "categories" => nil,
+        "exempt_groups" => nil,
+        "max_trust_level" => nil,
+      )
+      expect(settings(categories: nil, groups: nil, level: nil)["max_trust_level"]).to be_nil
+    end
+
+    it "moderates every post with the defaults" do
+      [[7], nil].product([[10], nil], [0, 4, nil]).each do |categories, groups, level|
+        expect(covers?(settings, categories: categories, groups: groups, level: level)).to be(true)
+      end
+    end
+
+    it "takes a post in a chosen category, or below one, and leaves the others" do
+      chosen = settings(categories: "7|9")
+      expect(covers?(chosen, categories: [7])).to be(true)
+      expect(covers?(chosen, categories: [12, 9])).to be(true)
+      expect(covers?(chosen, categories: [8])).to be(false)
+      expect(covers?(chosen, categories: [12, 8])).to be(false)
+    end
+
+    it "leaves the members of an exempt group, and only them" do
+      exempt = settings(groups: "41")
+      expect(covers?(exempt, groups: [10, 41])).to be(false)
+      expect(covers?(exempt, groups: [10, 11])).to be(true)
+    end
+
+    it "takes authors up to the highest trust level chosen, and leaves those above it" do
+      newcomers = settings(level: 1)
+      expect(covers?(newcomers, level: 0)).to be(true)
+      expect(covers?(newcomers, level: 1)).to be(true)
+      expect(covers?(newcomers, level: 2)).to be(false)
+    end
+
+    it "fails toward moderation when anything cannot be told" do
+      narrow = settings(categories: "9", groups: "41", level: 0)
+      # An unknown category, groups or trust level never takes a post out of scope...
+      expect(covers?(narrow, categories: nil, groups: [10], level: 0)).to be(true)
+      expect(covers?(narrow, categories: [], groups: [10], level: 0)).to be(true)
+      expect(covers?(narrow, categories: [9], groups: nil, level: nil)).to be(true)
+      # ...nor does a setting that cannot be read.
+      unreadable = settings(categories: "9|x", groups: "x", level: "x")
+      expect(covers?(unreadable, categories: [8], groups: [41], level: 4)).to be(true)
+      [nil, {}, "x"].each { |scope| expect(covers?(scope)).to be(true), scope.inspect }
+    end
+
+    it "is out of scope exactly when a readable setting says so, over every combination" do
+      outcomes = []
+      ["", "7", "7|9", "9|x"].product(["", "41", "x"], [4, 1, "x"]).each do |categories, groups, level|
+        scope = settings(categories: categories, groups: groups, level: level)
+        [[7], [12, 9], [8], nil].product([[41], [10], nil], [0, 1, 2, 4, nil]).each do |post|
+          in_category, member_of, trust = post
+          result = covers?(scope, categories: in_category, groups: member_of, level: trust)
+          chosen = scope["categories"]
+          exempt = scope["exempt_groups"]
+          highest = scope["max_trust_level"]
+          out =
+            (highest.is_a?(Integer) && trust.is_a?(Integer) && trust > highest) ||
+              (exempt.is_a?(Array) && member_of.is_a?(Array) && (exempt & member_of).any?) ||
+              (
+                chosen.is_a?(Array) && !chosen.empty? && in_category.is_a?(Array) &&
+                  (chosen & in_category).empty?
+              )
+          expect(result).to eq(!out), [scope, post].inspect
+          outcomes << result
+        end
+      end
+      # A loop that never took a post out (or never kept one) would check nothing.
+      expect(outcomes.uniq).to contain_exactly(true, false)
+    end
+  end
+
   describe "which attempt's verdict an entry takes" do
     let(:same) { "a" * 64 }
     let(:other) { "b" * 64 }
