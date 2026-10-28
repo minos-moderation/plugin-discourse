@@ -536,9 +536,14 @@ Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 - that the Discourse-tier specs added after the first CI run pass as written.
   `text_reader_view_spec.rb` ran against `PrettyText.cook` in CI (runs 40664872308 and
   40673051491): every entry passed but one, which showed that Discourse keeps `title` on
-  `span` (the chat plugin's allow list); `span` is now a tooltip tag. Run 40696799542
-  passed all 99 entries of that time; the 9 added after it (definitions ended by the
-  block on their next line) have not run there yet;
+  `span` (the chat plugin's allow list); `span` is now a tooltip tag. Run 40699706658
+  passed all 108 entries of that time. The 9 added in S8b (a definition's next line that
+  is a thematic break, an empty heading, an HTML block, a quote block or a details tag;
+  an address indented four columns; a next line in a deeper blockquote; a label without
+  an address continued as a paragraph; a label alone at the end), one for each branch of
+  `Text.definition_end?` and of the label's handling that no entry guarded, and the
+  `spec/fixtures/no_text.json` checks (F7) have not run there yet; their "reader" fields
+  come from markdown-it 15 with Discourse's `bbcode-block.js`;
 - `PublicSuffix.domain` is called as the gem documents it (nil for an invalid name); the
   plugin sends no `link_domains` when the constant is missing;
 - the exact oldest Discourse version with every API above (`ReviewableNote` in
