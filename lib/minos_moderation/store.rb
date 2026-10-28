@@ -13,8 +13,9 @@ module MinosModeration
   #   `received_at`, `handled_at`;
   # - `attempts` and `attempt` (the current attempt, the suffix of the item id);
   #   `core_hold` (the reason Discourse itself held the post, if it did); `text_digest` and
-  #   `truncated` (what was sent, without the text); `verdict` (the parsed payload, minus
-  #   `ocenzurowany` once applied); `original_digest` and `original_title_digest` (never
+  #   `truncated` (what the current attempt sent, without the text); `digests` (every
+  #   attempt's text digest, by attempt number as a String); `verdict` (the parsed payload,
+  #   minus `ocenzurowany` once applied); `original_digest` and `original_title_digest` (never
   #   the unmasked text); `post_id` (of a post the failure mode published); `outcome` and
   #   `reason` (what was done, and why).
   #

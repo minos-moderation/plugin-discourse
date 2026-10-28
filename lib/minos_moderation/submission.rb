@@ -58,7 +58,14 @@ module MinosModeration
       return VerdictApplier.new(@id).apply_failure(:no_text) if text[:text].empty?
 
       Store.update(@id) do |entry|
-        entry.merge("text_digest" => text[:digest], "truncated" => text[:truncated])
+        # Every attempt's digest, so a verdict for an earlier attempt of the same text
+        # still counts (`Decision.verdict_for_entry?`).
+        digests = entry["digests"].is_a?(Hash) ? entry["digests"] : {}
+        entry.merge(
+          "text_digest" => text[:digest],
+          "truncated" => text[:truncated],
+          "digests" => digests.merge(attempt.to_s => text[:digest]),
+        )
       end
       meta = {
         "links" => Text.link_count(raw),
@@ -199,7 +206,12 @@ module MinosModeration
 
       # The gateway's own ponow_za_s, not the plugin's pause capped to 15 minutes.
       wait = outcome.retry_in || Scores::BACKOFF_S
-      Store.record_limit(reason: reason, until_at: now + wait, http: outcome.http, code: outcome.code)
+      Store.record_limit(
+        reason: reason,
+        until_at: now + wait,
+        http: outcome.http,
+        code: outcome.code,
+      )
     end
 
     def refused(outcome)

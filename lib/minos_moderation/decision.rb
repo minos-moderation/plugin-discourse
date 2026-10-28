@@ -181,6 +181,30 @@ module MinosModeration
       end
     end
 
+    # Whether a delivered verdict is for the text the entry waits on. Each attempt has its
+    # own item id (`discourse:<review item>.<attempt>`), and only the current attempt's
+    # verdict used to count; but an earlier attempt's verdict assessed the same text when
+    # its digest equals the current attempt's, and one verdict is enough (the current
+    # attempt may even have been refused). An entry without per-attempt digests (written
+    # before them), or whose current attempt has no digest yet, takes only the current
+    # attempt: nothing unknown is taken.
+    #
+    # @param entry [Hash{String => Object}] the entry as `Store` keeps it (`attempt`,
+    #   `digests`: attempt number as a String => text digest).
+    # @param attempt [Integer] the attempt in the delivered item id.
+    # @return [Boolean] whether the verdict may be taken.
+    def self.verdict_for_entry?(entry, attempt)
+      current = entry["attempt"].to_i
+      return true if current.positive? && attempt == current
+      return false unless attempt.is_a?(Integer) && attempt.positive? && attempt < current
+
+      digests = entry["digests"]
+      return false unless digests.is_a?(Hash)
+
+      earlier = digests[attempt.to_s]
+      earlier.is_a?(String) && !earlier.empty? && earlier == digests[current.to_s]
+    end
+
     # Whether a refusal keeps the gateway closed past the post's time-out, so that the
     # failure mode applies at once instead of a retry that could only come too late
     # (shared plugin rule 3(a)). The gateway's `ponow_za_s` is compared as it was given,

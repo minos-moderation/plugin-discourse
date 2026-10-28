@@ -7,11 +7,12 @@ module MinosModeration
   #
   # Publishing is `perform(system user, :approve_post)`, rejecting `:reject_post`; a masked
   # publication first edits the queued `raw` (and `title`) with `update_fields`, which
-  # Discourse records in the reviewable's history. Every outcome leaves a note for the
-  # moderators on the review item (a `ReviewableNote` by the system user). When an action
-  # cannot be carried out — the topic was closed meanwhile, the masks do not map onto the
-  # Markdown, the reviewable refuses — the post is left to the moderators, never published
-  # instead.
+  # Discourse records in the reviewable's history, and approves only once the reviewable,
+  # read back from the database, carries exactly the masks. Every outcome leaves a note
+  # for the moderators on the review item (a `ReviewableNote` by the system user). When an
+  # action cannot be carried out — the topic was closed meanwhile, the masks do not map
+  # onto the Markdown, the reviewable refuses or does not keep the masks — the post is left
+  # to the moderators, never published instead.
   #
   # A post the failure mode published (fail-open) keeps its entry as `auto_published`, so a
   # verdict that still arrives is carried out on the published post (`apply_late`).
@@ -213,9 +214,29 @@ module MinosModeration
           log("update_fields raised #{e.class.name}")
           false
         end
-      return [instead(decision, :action_failed), {}] unless edited
+      return [instead(decision, :action_failed), {}] unless edited && stored?(reviewable, changes)
 
       [act(reviewable, :approve_post, decision), originals(raw, title)]
+    end
+
+    # Whether the queued text Discourse would publish is the masked one. `approve_post`
+    # publishes the reviewable's payload as the object holds it, so the object is read back
+    # from the database first: a save that reported success but did not keep the masks
+    # must never publish the original instead.
+    #
+    # @param reviewable [ReviewableQueuedPost] the pending post, reloaded here.
+    # @param changes [Hash{String => String}] the masked `raw` (and `title`).
+    # @return [Boolean] whether every masked field is stored exactly.
+    def stored?(reviewable, changes)
+      reviewable.reload
+      payload = reviewable.payload || {}
+      return true if changes.all? { |field, value| payload[field] == value }
+
+      log("the masked text did not persist")
+      false
+    rescue ::ActiveRecord::ActiveRecordError => e
+      log("reading the masked post back raised #{e.class.name}")
+      false
     end
 
     # A verdict for a post the failure mode already published. A person's decision since

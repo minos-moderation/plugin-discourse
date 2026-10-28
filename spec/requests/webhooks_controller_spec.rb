@@ -121,6 +121,46 @@ RSpec.describe MinosModeration::WebhooksController do
     expect(status).to eq("submitted")
   end
 
+  describe "a verdict for an earlier attempt of the same post" do
+    let(:digest) { MinosModeration::Text.for_submission(reviewable.payload["raw"])[:digest] }
+    let(:first) { JSON.generate(verdict.merge("id" => "discourse:#{reviewable.id}.1")) }
+
+    # Attempt 2 was sent and refused, so the entry waits for its retry.
+    def waiting_with(digests)
+      entry = MinosModeration::Store.get(reviewable.id)
+      MinosModeration::Store.set(
+        reviewable.id,
+        entry.merge("status" => "queued", "retry_at" => Time.now.to_i + 60, "digests" => digests),
+      )
+    end
+
+    it "is applied when that attempt sent the same text" do
+      waiting_with("1" => digest, "2" => digest)
+      expect_enqueued_with(job: :minos_apply_verdict, args: { reviewable_id: reviewable.id }) do
+        deliver(first)
+      end
+      expect(response.status).to eq(200)
+      expect(status).to eq("received")
+      expect(MinosModeration::Store.get(reviewable.id)["verdict"]["id"]).to end_with(".1")
+    end
+
+    it "is ignored with 200 when that attempt sent another text" do
+      waiting_with("1" => "0" * 64, "2" => digest)
+      expect_not_enqueued_with(job: :minos_apply_verdict) { deliver(first) }
+      expect(response.status).to eq(200)
+      expect(status).to eq("queued")
+    end
+
+    it "and the current attempt's verdict for the same text are applied once" do
+      waiting_with("1" => digest, "2" => digest)
+      second = JSON.generate(verdict)
+      deliver(first)
+      expect_not_enqueued_with(job: :minos_apply_verdict) { deliver(second) }
+      expect(response.status).to eq(200)
+      expect(MinosModeration::Store.get(reviewable.id)["verdict"]["id"]).to end_with(".1")
+    end
+  end
+
   it "takes a late verdict for a post the failure mode published" do
     entry = MinosModeration::Store.get(reviewable.id)
     MinosModeration::Store.set(reviewable.id, entry.merge("status" => "auto_published"))

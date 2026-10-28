@@ -53,13 +53,17 @@ Every Discourse touch point sits in a thin class (`settings.rb`, `store.rb`,
    until which the gateway refuses, from the uncapped `ponow_za_s` — which the dashboard
    shows until that time or the next `202`.
 3. The webhook verifies and parses the delivery; `Receiver` moves a waiting entry to
-   `received` with the verdict and enqueues `Jobs::MinosApplyVerdict`. Only the current
-   attempt's id is taken; a repeat, an earlier attempt or a foreign id is dropped with a
-   200.
+   `received` with the verdict and enqueues `Jobs::MinosApplyVerdict`. The current
+   attempt's id is taken, and an earlier attempt's when its stored digest equals the
+   current attempt's (`digests`, `Decision.verdict_for_entry?`: the same text was
+   assessed); a repeat, any later verdict for the same post, an earlier attempt of another
+   text (or of an entry written before per-attempt digests) and a foreign id are dropped
+   with a 200.
 4. `VerdictApplier#apply_verdict` asks `Decision.for_verdict` what to do and does it
    through the reviewable: `perform(system user, :approve_post)`, `update_fields` of the
-   queued `raw` (and `title`) followed by `:approve_post`, `:reject_post`, or nothing. A
-   `ReviewableNote` records the outcome. The entry ends `done`.
+   queued `raw` (and `title`), a `reload` that must read the masks back exactly, followed
+   by `:approve_post`, `:reject_post`, or nothing. A `ReviewableNote` records the
+   outcome. The entry ends `done`.
 5. The failure mode (`Decision.for_failure`) never publishes a post Discourse held itself
    or a moderator edited. When it publishes one (fail-open), the entry ends
    `auto_published` with the post's id, and a verdict that still arrives goes through
@@ -228,8 +232,10 @@ Verified in Discourse's source (`main`, September 2026) or in
   before Discourse's own check for personal messages, which is why the handler skips
   them itself;
 - `ReviewableQueuedPost`: `perform(user, :approve_post / :reject_post)` (`approve_post`
-  is offered only while the topic is open, hence `topic_closed`), `update_fields` with a
-  `payload` hash and its history entry, `payload["raw"]` and `payload["title"]`,
+  is offered only while the topic is open, hence `topic_closed`, and creates the post from
+  the object's in-memory `payload` through `create_options`), `update_fields` with a
+  `payload` hash and its history entry (it assigns the payload, then returns `save`),
+  `payload["raw"]` and `payload["title"]`,
   `pending?`, `reviewable_notes` / `ReviewableNote::MAX_CONTENT_LENGTH`;
 - the score reason text `reviewables.reasons.<reason>` (`ReviewableScoreSerializer`);
 - `ProblemCheck` (realtime when `perform_every` is unset; `problem`, `no_problem`,

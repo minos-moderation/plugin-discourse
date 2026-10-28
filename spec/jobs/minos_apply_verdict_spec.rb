@@ -55,6 +55,8 @@ RSpec.describe Jobs::MinosApplyVerdict do
   describe "ocenzurowane" do
     let(:masked) { sent[:text].sub("world", mask * 5) }
 
+    # Also the control of "never approves when the masked text did not persist": an edit
+    # that persists is approved.
     it "publishes the masked text and keeps the original" do
       verdict = assessed("ocenzurowane", "kategorie" => ["wulgaryzmy"], "ocenzurowany" => masked)
       apply_verdict(verdict)
@@ -115,6 +117,16 @@ RSpec.describe Jobs::MinosApplyVerdict do
       apply_verdict(assessed("ocenzurowane", "ocenzurowany" => masked))
       expect(reviewable).to be_pending
       expect(entry).to include("outcome" => "leave", "reason" => "action_failed")
+    end
+
+    it "never approves when the masked text did not persist, although the edit reported success" do
+      # A save that reports success while the stored payload keeps the original text.
+      allow_any_instance_of(ReviewableQueuedPost).to receive(:update_fields).and_return(true)
+      apply_verdict(assessed("ocenzurowane", "ocenzurowany" => masked))
+      expect(reviewable).to be_pending
+      expect(reviewable.payload["raw"]).to eq(raw)
+      expect(entry).to include("outcome" => "leave", "reason" => "action_failed")
+      expect(reviewable.target_id).to be_nil
     end
 
     it "leaves the post when the masks cannot be carried onto it" do

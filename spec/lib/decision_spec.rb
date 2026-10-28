@@ -346,6 +346,36 @@ RSpec.describe "MinosModeration::Decision" do
     end
   end
 
+  describe "which attempt's verdict an entry takes" do
+    let(:same) { "a" * 64 }
+    let(:other) { "b" * 64 }
+
+    def takes?(entry, attempt)
+      decision.verdict_for_entry?(entry, attempt)
+    end
+
+    it "takes the current attempt's verdict, as before" do
+      expect(takes?({ "attempt" => 2 }, 2)).to be(true)
+      expect(takes?({ "attempt" => 2, "digests" => { "2" => same } }, 2)).to be(true)
+    end
+
+    it "takes an earlier attempt's verdict when that attempt sent the same text" do
+      entry = { "attempt" => 3, "digests" => { "1" => same, "2" => other, "3" => same } }
+      expect(takes?(entry, 1)).to be(true)
+      expect(takes?(entry, 2)).to be(false)
+    end
+
+    it "takes nothing it cannot tie to the text: no digests, no current digest, a later id" do
+      expect(takes?({ "attempt" => 2 }, 1)).to be(false)
+      expect(takes?({ "attempt" => 2, "digests" => { "1" => same } }, 1)).to be(false)
+      expect(takes?({ "attempt" => 2, "digests" => { "1" => "", "2" => "" } }, 1)).to be(false)
+      expect(takes?({ "attempt" => 2, "digests" => "nie" }, 1)).to be(false)
+      expect(takes?({ "attempt" => 2, "digests" => { "2" => same, "3" => same } }, 3)).to be(false)
+      expect(takes?({}, 1)).to be(false)
+      expect(takes?({ "attempt" => 0 }, 0)).to be(false)
+    end
+  end
+
   describe "what a pending entry needs" do
     let(:now) { 1_000_000 }
     let(:timeout) { 20 * 60 }

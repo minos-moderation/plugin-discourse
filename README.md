@@ -51,7 +51,8 @@ Kilka zasad, które zawsze obowiązują:
 - **Zmiana w kolejce.** Jeśli moderator zmieni treść posta w kolejce, zanim przyjdzie
   werdykt, werdykt dotyczy już innego tekstu — post czeka na decyzję moderatora.
 - **Maskowanie tylko pewne.** Jeśli zamaskowanych fragmentów nie da się bezpiecznie
-  nanieść na treść w Markdownie, post nie jest publikowany, tylko czeka na moderatora.
+  nanieść na treść w Markdownie albo zapisana w kolejce treść nie jest dokładnie
+  zamaskowana, post nie jest publikowany, tylko czeka na moderatora.
 - Moderator może w każdej chwili sam zatwierdzić albo odrzucić post w kolejce; późniejszy
   werdykt zostanie wtedy pominięty.
 
@@ -174,8 +175,9 @@ ustawienia `minos_failure_mode`.
 Do bramy trafia, dla każdego wstrzymanego posta:
 
 - **identyfikator** `discourse:<numer zgłoszenia w kolejce>.<numer próby>` — bez żadnej
-  treści; każda ponowna wysyłka ma własny numer, a werdykt dla wcześniejszej próby jest
-  pomijany;
+  treści; każda ponowna wysyłka ma własny numer. Werdykt dla wcześniejszej próby jest
+  stosowany tylko wtedy, gdy ta próba wysłała ten sam tekst co ostatnia (i tylko raz na
+  post); inaczej jest pomijany;
 - **tekst**: tytuł nowego tematu (jeśli to nowy temat), pusty wiersz i treść posta.
   Z Markdownu usuwane są tylko znaczniki (np. `**`, `[quote]`, składnia linków i
   obrazków), a zostaje każde słowo, które czytelnik może zobaczyć — także w cytatach
