@@ -88,28 +88,40 @@ The rule: **the text sent for assessment is the text a reader sees**, and nothin
 reader can see is dropped; where removing something is not certain, more is sent. So
 `Text.for_submission` reduces the raw Markdown as Discourse renders it:
 
-- Markdown markup goes (`**`, single `*`/`_` emphasis as markdown-it reads it, heading and
-  blockquote markers, link and image syntax — the alt text and title stay, the link's
-  URL too); a quote leaves the title Discourse shows, a details block its summary.
+- Markdown markup goes where markdown-it reads it as markup: paired `**`, `__`, `~~`,
+  single `*`/`_` emphasis, heading and blockquote markers, fence markers (an info string
+  stays), link and image syntax (the alt text and title stay, the link's URL too). A
+  lone marker a reader sees as it is written stays, so that it never joins two words.
+  A quote leaves the title Discourse shows, a details block its summary.
+- Each line is read as markdown-it's block rules read it (`Text.line_kinds`): fenced code
+  (closed only by a fence of at most three spaces, at the top, in a blockquote or in a
+  list item, or by the end of its container), indented code, HTML blocks, a table's
+  header line.
+- Code is shown as it is written, so it is sent as it is written (`Text.code_chars`):
+  fenced and indented code blocks, code spans (markdown-it's backtick rule, escapes and
+  HTML tags passed over) and `[code]…[/code]`. Only a span's backticks and the space
+  markdown-it trims at each of its ends go.
 - `[quote=…]`/`[details=…]` is a block only where Discourse's `bbcode-block.js` makes one
   (`Text.block_tags`): at the first column, closed by its tag at the very end of the line
-  or alone on a later line (nested tags counted), never in fenced code, an HTML block or
-  another BBCode block. Elsewhere it is sent as written, attribute included.
-- HTML tags (markdown-it's grammar) go; a block tag leaves a line break, an `<img>` its
-  alt text and title. An HTML comment goes with its text. Whatever a removed tag or
-  comment carried (attribute values, an unknown tag name, the comment's text) is added
-  at the end of the text, after a blank line: a tooltip or a tag shown as code stays
-  assessed, and a word the tag split reaches the gateway whole.
+  or alone on a later line (nested tags counted), never in code, an HTML block, a table's
+  header or another BBCode block. Elsewhere it is sent as written, attribute included.
+- Outside code, HTML tags (markdown-it's grammar, an escaped `\<` excepted) go: a block
+  tag leaves a line break, an `<img>` its alt text and title in its place, and a tooltip
+  Discourse's sanitizer keeps (`title` of `a`, `abbr`, `summary`) follows the word it
+  is on, so it never splits it. An HTML comment goes with its text. No other attribute
+  is sent: the sanitizer removes it or a reader does not see it (an `href`). What is
+  not sent does not count toward the 3000 characters.
 - Character references are decoded as a browser decodes them (`html_entities.json`, the
-  HTML standard's named references, generated from Python's `html.entities.html5`);
-  decoded characters have no origin, so a mask on one holds the post.
+  HTML standard's named references, generated from Python's `html.entities.html5`),
+  except in code; decoded characters have no origin, so a mask on one holds the post.
 - Characters invisible by default (`\p{Default_Ignorable_Code_Point}`: a soft hyphen,
   zero-width spaces) go, from the title too.
 
 `spec/fixtures/reader_view.json` is the corpus: `spec/lib/text_spec.rb` checks the sent
-text of each entry and the property against the reader's view as Discourse's source
-describes it; `spec/integration/text_reader_view_spec.rb` checks the property against
-Discourse's own `PrettyText.cook` in CI. A change of this reduction changes the digest of
+text of each entry and the property "every word a reader sees is a word of the sent
+text" (whole words: a split word fails it) against the reader's view as Discourse's
+source describes it; `spec/integration/text_reader_view_spec.rb` checks the same
+property against Discourse's own `PrettyText.cook` in CI. A change of this reduction changes the digest of
 a post in flight at the upgrade: its verdict is then not applied (`edited`) and a
 moderator decides, the safe direction.
 
@@ -324,10 +336,11 @@ Verified in Discourse's source (`main`, September 2026) or in
 
 Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 
-- that the Discourse-tier specs added after the first CI run pass as written; in
-  particular `text_reader_view_spec.rb`, whose reader views follow Discourse's source
-  (`bbcode-block.js`, `quotes.js`, the details and poll rules, the sanitizer's allow list)
-  and markdown-it 15, checked locally, but not `PrettyText.cook` itself;
+- that the Discourse-tier specs added after the first CI run pass as written.
+  `text_reader_view_spec.rb` passed against `PrettyText.cook` in CI (run 40664872308) on
+  its first 15 entries; the entries added since (fences, a table header, an escaped tag,
+  a tooltip, a trimmed code span, a comment in code) were checked locally against
+  markdown-it 15 with Discourse's `bbcode-block.js`, not against `PrettyText.cook`;
 - `PublicSuffix.domain` is called as the gem documents it (nil for an invalid name); the
   plugin sends no `link_domains` when the constant is missing;
 - the exact oldest Discourse version with every API above (`ReviewableNote` in

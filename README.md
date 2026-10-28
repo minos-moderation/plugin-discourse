@@ -180,16 +180,17 @@ Do bramy trafia, dla każdego wstrzymanego posta:
   post); inaczej jest pomijany;
 - **tekst** — taki, jaki widzi czytelnik: tytuł nowego tematu (jeśli to nowy temat),
   pusty wiersz i treść posta. Usuwane są znaczniki Markdownu i HTML (np. `**`, `*`,
-  `[quote]`, `<b>`, komentarze `<!-- -->`), encje HTML zamieniane są na znaki (np.
-  `&#117;` na `u`), a znaki niewidoczne (np. miękki dywiz) znikają — tak, żeby słowo
-  rozdzielone znacznikiem dotarło do bramy w całości. Zostaje każde słowo, które
-  czytelnik może zobaczyć — także w cytatach (razem z nazwą pokazaną w nagłówku
+  `[quote]`, `<b>`, komentarze `<!-- -->` razem z treścią), encje HTML zamieniane są na
+  znaki (np. `&#117;` na `u`), a znaki niewidoczne (np. miękki dywiz) znikają — tak,
+  żeby słowo rozdzielone znacznikiem dotarło do bramy w całości. Zostaje każde słowo,
+  które czytelnik może zobaczyć — także w cytatach (razem z nazwą pokazaną w nagłówku
   cytatu), spoilerach, podsumowaniach sekcji zwijanych, tekstach alternatywnych i
-  tytułach obrazków, żeby nie dało się niczego w nich ukryć. `[quote=…]`, którego
-  Discourse nie pokazuje jako cytatu (np. w środku linii albo bez zamknięcia), idzie
-  dosłownie. To, co usunięty znacznik HTML albo komentarz niósł (np. treść podpowiedzi,
-  tekst komentarza), jest dopisywane na końcu. Wysyłane jest **pierwsze 3000 znaków**
-  (limit bramy);
+  tytułach obrazków, żeby nie dało się niczego w nich ukryć. Kod (w blokach i między
+  grawisami) idzie tak, jak jest zapisany, bo tak go widzi czytelnik. `[quote=…]`,
+  którego Discourse nie pokazuje jako cytatu (np. w środku linii albo bez zamknięcia),
+  idzie dosłownie. Podpowiedź (atrybut `title` linku albo skrótu) idzie zaraz po
+  słowie, którego dotyczy; innych atrybutów HTML, np. adresów linków, wtyczka nie
+  wysyła. Wysyłane jest **pierwsze 3000 znaków** (limit bramy);
 - **profil** z ustawienia `minos_profile`;
 - **sygnały antyspamowe**: liczba linków w poście, to, czy to pierwszy post autora, oraz
   do 10 domen, do których prowadzą linki i obrazki (np. `example.com`, bez reszty adresu).

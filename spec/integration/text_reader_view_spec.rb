@@ -4,8 +4,8 @@
 # The text sent for assessment is the text a reader sees. Each post of the corpus
 # (`spec/fixtures/reader_view.json`, invented text only) is rendered by Discourse itself
 # (`PrettyText.cook`, its markdown-it rules, BBCode and sanitizer), and every word a reader
-# can see there must occur in what the plugin sends. The property is one way: sending more
-# than the reader sees is allowed (an attribute, a comment's text), dropping a word never.
+# can see there must be a word of what the plugin sends. The property is one way: sending
+# more than the reader sees is allowed, dropping or splitting a word the reader sees never.
 RSpec.describe "The text sent for a post, against Discourse's own rendering" do
   corpus =
     JSON.parse(
@@ -20,12 +20,14 @@ RSpec.describe "The text sent for a post, against Discourse's own rendering" do
   # Discourse's own words around the author's: the poll's vote count, the quote's controls.
   let(:chrome) { ".poll-info, .quote-controls" }
 
-  # The text a reader sees in cooked HTML: the text nodes, image alt texts and titles, and
-  # tooltips, with a line break around every block.
+  # The text a reader sees in cooked HTML: the text nodes and image alt texts and titles,
+  # with a line break around every block, then the tooltips the sanitizer kept (a tooltip
+  # is not part of the words around it).
   def reader_view(html)
     fragment = Nokogiri::HTML5.fragment(html)
     fragment.css(chrome).each(&:remove)
     shown = +""
+    tooltips = []
     visit = lambda do |node|
       if node.text?
         shown << node.text
@@ -33,15 +35,16 @@ RSpec.describe "The text sent for a post, against Discourse's own rendering" do
       end
       block = node.element? && blocks.include?(node.name)
       shown << "\n" if block
-      if node.element?
-        shown << " #{node["alt"]} " if node.name == "img"
-        shown << " #{node["title"]} " if node["title"]
+      if node.element? && node.name == "img"
+        shown << " #{node["alt"]} #{node["title"]} "
+      elsif node.element? && node["title"]
+        tooltips << node["title"]
       end
       node.children.each { |child| visit.call(child) }
       shown << "\n" if block
     end
     visit.call(fragment)
-    shown
+    "#{shown}\n#{tooltips.join("\n")}"
   end
 
   # The words of a text as a reader perceives them: invisible characters do not split
@@ -63,8 +66,9 @@ RSpec.describe "The text sent for a post, against Discourse's own rendering" do
       # A rendering that shows nothing would pass without checking anything.
       expect(seen).not_to be_empty, "nothing visible in #{cooked.inspect}"
 
-      sent = MinosModeration::Text.for_submission(entry["raw"])[:text].unicode_normalize(:nfkc)
-      missing = seen.reject { |word| sent.include?(word) }
+      sent = MinosModeration::Text.for_submission(entry["raw"])[:text]
+      # Whole words: a word the reader sees whole must not reach the gateway split.
+      missing = seen - words(sent)
       expect(missing).to eq([]),
       "Discourse shows #{cooked.inspect}; the plugin sends #{sent.inspect}"
     end

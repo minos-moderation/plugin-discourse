@@ -32,16 +32,17 @@ RSpec.describe "MinosModeration::Text" do
       sent = text.for_submission(raw)[:text]
       %w[
         Nagłówek pogrubiony skreślony kodem cytowana ktos cytowane Podsumowanie ukryta tajemnica
-        komentarz opis https://example.test/a obrazka puts
+        opis https://example.test/a obrazka puts
       ].each { |word| expect(sent).to include(word) }
       markup = ["**", "~~", "`", "[quote", "[/details]", "![", "<!--", "post:1", "upload://", "```"]
       markup.each { |token| expect(sent).not_to include(token) }
+      # An HTML comment is invisible: neither its markers nor its text are sent.
+      expect(sent).not_to include("komentarz")
     end
 
-    it "removes HTML tags in a word, and sends what they carry at the end, never inside it" do
+    it "removes HTML tags in a word, and the attributes no reader sees" do
       raw = %(zak<span title="ukryty tytuł">a</span>zane i <kbd>dalej</kbd>)
-      sent = text.for_submission(raw)[:text]
-      expect(sent).to eq(%(zakazane i dalej\n\n<span title="ukryty tytuł">))
+      expect(text.for_submission(raw)[:text]).to eq("zakazane i dalej")
     end
 
     it "sends the raw text of a post that is markup only, rather than nothing" do
@@ -113,7 +114,8 @@ RSpec.describe "MinosModeration::Text" do
         expect(sent).to eq(entry["sent"])
         seen = words(entry["reader"])
         expect(seen).not_to be_empty
-        missing = seen.reject { |word| sent.unicode_normalize(:nfkc).include?(word) }
+        # Whole words: a word the reader sees whole must not reach the gateway split.
+        missing = seen - words(sent)
         expect(missing).to eq([]), "#{entry["raw"].inspect} sends #{sent.inspect}"
       end
     end
@@ -141,21 +143,71 @@ RSpec.describe "MinosModeration::Text" do
       expect(shown).to start_with("Zobacz kot mój kot tu")
     end
 
-    it "sends attributes and unknown tags at the end, and bare known tags not at all" do
-      expect(sent(%(<a href="https://e.test/x" title="podpowiedź">link</a>))).to eq(
-        %(link\n\n<a href="https://e.test/x" title="podpowiedź">),
+    it "keeps a tooltip after the word it is on, and no other attribute" do
+      expect(sent(%(<a href="https://e.test/x" class="c" title="podpowiedź">link</a> dalej))).to eq(
+        "link podpowiedź dalej",
       )
-      expect(sent("<b>tekst</b> <slowo>")).to eq("tekst\n\n<slowo>")
+      expect(sent(%(zak<abbr title="skrót">a</abbr>zane))).to eq("zakazane skrót")
+      expect(sent(%(x<abbr title="k&#117;rwa">y</abbr>))).to eq("xy kurwa")
+      expect(sent("<b>tekst</b> <slowo> <span title=\"ukryte\">z</span>")).to eq("tekst  z")
     end
 
-    it "removes a comment with its text, sending the text at the end" do
-      expect(sent("przed <!-- ukryty komentarz --> po")).to eq("przed  po\n\n ukryty komentarz")
+    it "removes a comment with its text, which no reader sees" do
+      expect(sent("przed <!-- ukryty komentarz --> po")).to eq("przed  po")
       expect(sent("a<!-->b")).to eq("ab")
       expect(sent("a <!-- nigdy nie zamknięty")).to eq("a <!-- nigdy nie zamknięty")
     end
 
-    it "decodes entities in what goes to the end, too" do
-      expect(sent(%(x<span title="k&#117;rwa">y</span>))).to eq(%(xy\n\n<span title="kurwa">))
+    it "counts toward the limit only what is sent: no attribute, no comment" do
+      raw = "#{"a" * 2950} <a href=\"https://e.test/#{"x" * 60}\">link</a><!-- #{"k" * 80} -->"
+      result = text.for_submission(raw)
+      expect(result[:text]).to eq("#{"a" * 2950} link")
+      expect(result[:truncated]).to be(false)
+    end
+
+    it "leaves an escaped tag as text" do
+      expect(sent(%(\\<b title="widoczny">x</b>))).to eq(%(\\<b title="widoczny">x))
+    end
+  end
+
+  describe "code" do
+    def sent(raw)
+      text.for_submission(raw)[:text]
+    end
+
+    it "is sent as it is written: tags, comments, references and emphasis stay" do
+      raw = %(`<b title="w kodzie">x</b> <!-- k --> &#117; *a*`)
+      expect(sent(raw)).to eq(%(<b title="w kodzie">x</b> <!-- k --> &#117; *a*))
+      fenced = "Tekst\n```html\n<span title=\"S\">x</span> &amp;\n```\nPo <b>kodzie</b>"
+      expect(sent(fenced)).to eq("Tekst\nhtml\n<span title=\"S\">x</span> &amp;\n\nPo kodzie")
+      indented = "Tekst\n\n    <i title=\"S\">x</i>\n\nakapit <i>a</i>"
+      expect(sent(indented)).to eq("Tekst\n\n    <i title=\"S\">x</i>\n\nakapit a")
+      expect(sent("[code]<u title=\"S\">x</u>[/code] <u>y</u>")).to eq("<u title=\"S\">x</u> y")
+    end
+
+    it "is read in a blockquote and in a list item, until its container ends" do
+      quoted = "> ```\n> <b title=\"S\">x</b>\n> ```\npo <b>kodzie</b>"
+      expect(sent(quoted)).to eq("<b title=\"S\">x</b>\n\npo kodzie")
+      listed = "- ```\n  <b title=\"S\">x</b>\nzak<b>a</b>zane"
+      expect(sent(listed)).to include("<b title=\"S\">x</b>").and end_with("zakazane")
+    end
+
+    it "loses the fence markers only; the line a fence-like marker starts stays" do
+      expect(sent("```Ty SLOWO` i reszta\nkoniec")).to eq("Ty SLOWO` i reszta\nkoniec")
+      expect(sent("Tekst\n~~~\n```SLOWO w kodzie\n~~~")).to eq("Tekst\n\nSLOWO w kodzie")
+    end
+
+    it "is closed only by a fence at the top, as markdown-it closes it" do
+      %w[> \ \ \ \ -].map { |prefix| prefix.tr("\\", " ") }.uniq.each do |prefix|
+        raw = "```\n#{prefix} ```\n[quote=Kasia, SLOWO]\ncytat\n[/quote]\n```"
+        expect(sent(raw)).to include("[quote=Kasia, SLOWO]"), raw.inspect
+      end
+    end
+
+    it "drops the space markdown-it trims at each end of a span, and no other" do
+      expect(sent("zak` azane `")).to eq("zakazane")
+      expect(sent("a ` b` c")).to eq("a  b c")
+      expect(sent("a `  ` c")).to eq("a    c")
     end
   end
 
@@ -229,6 +281,13 @@ RSpec.describe "MinosModeration::Text" do
       expect(sent(inside_html)).to include("[quote=a, SLOWO]")
       bounded = "[spoiler]\n[quote=a, SLOWO]\nx\n[/spoiler]\n[/quote]"
       expect(sent(bounded)).to include("[quote=a, SLOWO]").and include("[/quote]")
+    end
+
+    it "is sent as written when it heads a table" do
+      raw = "[quote=Kasia, SLOWO|x]\n|---|---|\ncytat\n[/quote]"
+      expect(sent(raw)).to eq(raw)
+      after_table = "| a | b |\n|---|---|\n[quote=\"Kasia, post:1\"]\ncytat\n[/quote]"
+      expect(sent(after_table)).to eq("| a | b |\n|---|---|\nKasia\n\ncytat")
     end
 
     it "is sent as written when text follows its closing tag, or it is indented" do
