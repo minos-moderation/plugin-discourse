@@ -72,7 +72,7 @@ module MinosModeration
 
     # Applies the failure mode to a post that will get no verdict.
     #
-    # @param reason [Symbol] `:timeout`, `:config` or `:no_text`.
+    # @param reason [Symbol] `:timeout`, `:limit`, `:config` or `:no_text`.
     # @return [void]
     def apply_failure(reason)
       Store.lock(@id) do

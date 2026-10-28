@@ -42,6 +42,7 @@ en:
       edited: "post zmieniono w kolejce po wysłaniu go do oceny"
       unassessed: "brama nie oceniła posta (nieocenione)"
       timeout: "brama nie przysłała werdyktu w wyznaczonym czasie"
+      limit: "brama odmówiła przyjęcia posta na dłużej, niż post może czekać na werdykt (np. wyczerpany dobowy limit klucza)"
       config: "błąd konfiguracji wtyczki; szczegóły są na pulpicie administratora"
       no_text: "post nie zawiera tekstu do oceny"
       truncated: "oceniono tylko pierwsze 3000 znaków posta"
@@ -61,3 +62,5 @@ en:
       disallowed_address: "adres bramy wskazuje na sieć prywatną, a Discourse nie łączy się z takimi adresami"
       refused: "brama odrzuciła wysyłkę posta (HTTP %{http}, kod %{kod})"
       unexpected: "brama odpowiedziała w nieoczekiwany sposób (HTTP %{http})"
+      daily_limit: "brama nie przyjmuje postów do oceny do %{godzina}, bo klucz forum wyczerpał dobowy limit (HTTP %{http}, kod %{kod}); do tego czasu nowe posty przechodzą w tryb awarii"
+      overloaded: "brama jest przeciążona i nie przyjmuje postów do oceny do %{godzina} (HTTP %{http}, kod %{kod}); wtyczka ponawia wysyłkę, a post, który nie zdąży dostać werdyktu w czasie minos_timeout_minutes, przechodzi w tryb awarii"

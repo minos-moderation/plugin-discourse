@@ -384,6 +384,26 @@ RSpec.describe "MinosModeration::Decision" do
       expect(decision.for_entry(late, now: now, timeout_s: stored)).to eq(:timeout)
     end
 
+    it "gives the failure mode at once to a refusal that ends after the post's time-out" do
+      # A daily limit: the gateway refuses for 36000 s, while the plugin's own pause is
+      # capped at 900 s. The uncapped value decides, so the post does not wait 20 minutes
+      # for a retry that can only be refused again.
+      queued = { "status" => "sending", "queued_at" => now, "sending_at" => now }
+      outlasts = ->(entry, seconds) do
+        decision.refusal_outlasts_timeout?(entry, now: now, timeout_s: timeout, retry_in: seconds)
+      end
+      expect(outlasts.call(queued, 36_000)).to be(true)
+      expect(outlasts.call(queued, timeout + 1)).to be(true)
+      expect(outlasts.call(queued, timeout)).to be(false)
+      expect(outlasts.call(queued, 30)).to be(false)
+      # The time already waited counts: 19 minutes in, a 90 s refusal ends too late.
+      waited = queued.merge("queued_at" => now - (19 * 60))
+      expect(outlasts.call(waited, 90)).to be(true)
+      expect(outlasts.call(waited, 30)).to be(false)
+      # Without ponow_za_s the backoff stays, and the sweeper times the post out.
+      [nil, 0, -1, "36000"].each { |value| expect(outlasts.call(queued, value)).to be(false) }
+    end
+
     it "applies a received verdict again when its job was lost" do
       expect(needs("status" => "received", "received_at" => now - 121)).to eq(:reapply)
       expect(needs("status" => "received", "received_at" => now - 5)).to be_nil

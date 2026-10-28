@@ -44,8 +44,14 @@ Every Discourse touch point sits in a thin class (`settings.rb`, `store.rb`,
    `link_domains` from `Text.link_hosts` reduced with `PublicSuffix.domain`) and POSTs it
    with `GatewayClient` over `FinalDestination::HTTP`. `Scores.classify` reads the answer:
    `202` → `submitted`; `429`/`503`/`408`/`5xx`/no answer → `queued` again with
-   `retry_at` (`ponow_za_s`, or 60 s doubling to 15 minutes) and an `enqueue_in`;
-   anything else → a configuration problem for the dashboard and the failure mode.
+   `retry_at` (`ponow_za_s`, or 60 s doubling to 15 minutes) and an `enqueue_in`, unless
+   the gateway's `ponow_za_s`, uncapped, ends after the post's time-out
+   (`Decision.refusal_outlasts_timeout?`, shared plugin rule 3(a)): then the failure mode
+   at once, reason `limit`; anything else → a configuration problem for the dashboard and
+   the failure mode. A `429` `limit_dobowy_klucza`, `limit_globalny_b2b` or
+   `kolejka_pelna` (`Scores::LIMITS`) also records `Store.limit` — the state and the time
+   until which the gateway refuses, from the uncapped `ponow_za_s` — which the dashboard
+   shows until that time or the next `202`.
 3. The webhook verifies and parses the delivery; `Receiver` moves a waiting entry to
    `received` with the verdict and enqueues `Jobs::MinosApplyVerdict`. Only the current
    attempt's id is taken; a repeat, an earlier attempt or a foreign id is dropped with a
@@ -71,7 +77,7 @@ Every Discourse touch point sits in a thin class (`settings.rb`, `store.rb`,
    `auto_published` entry after 30 days.
 
 State lives in `PluginStore` (`minos-moderation`, key `pending:<reviewable id>`, plus
-`problem`); see `Store` for the fields. It never holds the unmasked text of a masked post
+`problem` and `limit`); see `Store` for the fields. It never holds the unmasked text of a masked post
 (a digest at most): the reviewable's history and the post's revisions keep it where
 Discourse's own permissions guard it. Every read-modify-write of an entry runs under a
 `DistributedMutex` per reviewable, so the job, the webhook and the sweeper never apply

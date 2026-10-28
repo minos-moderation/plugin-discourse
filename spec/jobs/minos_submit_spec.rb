@@ -131,6 +131,60 @@ RSpec.describe Jobs::MinosSubmit do
     expect(entry["retry_at"]).to eq(Time.now.to_i + 30)
   end
 
+  it "tells the administrator until when a full queue refuses, and still retries" do
+    answer(429, { "kod" => "kolejka_pelna", "komunikat" => "x", "ponow_za_s" => 30 })
+    freeze_time
+    run_job
+    expect(entry["status"]).to eq("queued")
+    expect(MinosModeration::Store.limit).to include(
+      "reason" => "overloaded",
+      "until" => Time.now.to_i + 30,
+      "kod" => "kolejka_pelna",
+    )
+  end
+
+  describe "a daily limit that ends after the post's time-out" do
+    before do
+      answer(429, { "kod" => "limit_dobowy_klucza", "komunikat" => "x", "ponow_za_s" => 36_000 })
+      freeze_time
+    end
+
+    it "applies the failure mode at once instead of retrying within 15 minutes" do
+      expect_not_enqueued_with(job: :minos_submit) { run_job }
+      expect(reviewable.reload).to be_pending
+      expect(entry).to include("status" => "done", "outcome" => "leave", "reason" => "limit")
+    end
+
+    it "publishes the post at once under fail-open, open for a late verdict" do
+      SiteSetting.minos_failure_mode = "fail-open"
+      run_job
+      expect(reviewable.reload).to be_approved
+      expect(entry).to include("status" => "auto_published", "reason" => "limit")
+    end
+
+    it "records until when the gateway refuses, from ponow_za_s and not the capped pause" do
+      run_job
+      expect(MinosModeration::Store.limit).to include(
+        "reason" => "daily_limit",
+        "until" => Time.now.to_i + 36_000,
+        "http" => 429,
+        "kod" => "limit_dobowy_klucza",
+      )
+      expect(MinosModeration::Store.problem).to be_nil
+    end
+
+    it "forgets the limit once the gateway accepts a post again" do
+      run_job
+      MinosModeration::Store.set(
+        reviewable.id,
+        { "status" => "queued", "queued_at" => now, "retry_at" => now, "attempts" => 0 },
+      )
+      answer(202)
+      run_job
+      expect(MinosModeration::Store.limit).to be_nil
+    end
+  end
+
   it "retries an unavailable queue after a backoff" do
     answer(503, { "kod" => "kolejka_niedostepna", "komunikat" => "x" })
     freeze_time

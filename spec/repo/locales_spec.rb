@@ -65,9 +65,12 @@ RSpec.describe "The plugin's locale files" do
     end
   end
 
-  it "has a text for every configuration problem the dashboard may show" do
+  it "has a text for every problem the dashboard may show" do
     problems = tree("server", "pl_PL").dig("minos_moderation", "problems")
-    %w[invalid_url missing_key missing_secret refused unexpected disallowed_address].each do |key|
+    %w[
+      invalid_url missing_key missing_secret refused unexpected disallowed_address daily_limit
+      overloaded
+    ].each do |key|
       expect(problems[key]).to be_a(String), key
     end
   end

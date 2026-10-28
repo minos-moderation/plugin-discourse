@@ -29,9 +29,9 @@ module MinosModeration
     # (`mask_unmappable`, `topic_closed`, `action_failed`, `apply_stuck`). Each but
     # `verdict` has a text under `minos_moderation.reasons` in the locales.
     REASONS = %i[
-      verdict core_hold edited unassessed timeout config no_text truncated censored_setting
-      no_masked_text mask_unmappable blocked_setting support topic_closed action_failed
-      apply_stuck person_acted
+      verdict core_hold edited unassessed timeout limit config no_text truncated
+      censored_setting no_masked_text mask_unmappable blocked_setting support topic_closed
+      action_failed apply_stuck person_acted
     ].freeze
 
     # Seconds a finished entry is kept, to recognise a late repeated delivery.
@@ -107,7 +107,7 @@ module MinosModeration
     # moderators, with a note — approving it would also unsilence an auto-silenced author.
     #
     # @param settings [Hash{String => String}] as in {for_verdict}.
-    # @param reason [Symbol] `:unassessed`, `:timeout`, `:config` or `:no_text`.
+    # @param reason [Symbol] `:unassessed`, `:timeout`, `:limit`, `:config` or `:no_text`.
     # @param support [Boolean] whether a verdict set `wsparcie` anyway.
     # @param core_hold [Boolean] whether Discourse itself held the post for review.
     # @param edited [Boolean] whether the post changed in the queue after it was sent.
@@ -179,6 +179,23 @@ module MinosModeration
       else
         result(:keep, :unassessed, support)
       end
+    end
+
+    # Whether a refusal keeps the gateway closed past the post's time-out, so that the
+    # failure mode applies at once instead of a retry that could only come too late
+    # (shared plugin rule 3(a)). The gateway's `ponow_za_s` is compared as it was given,
+    # before the cap on the plugin's own retry pause (`Scores::MAX_BACKOFF_S`): a daily
+    # limit's 36000 s would otherwise read as a retry in 15 minutes.
+    #
+    # @param entry [Hash{String => Object}] the entry as `Store` keeps it (`queued_at`).
+    # @param now [Integer] the clock, in seconds.
+    # @param timeout_s [Integer] `Settings.timeout_s`.
+    # @param retry_in [Integer, nil] the refusal's `ponow_za_s`, uncapped.
+    # @return [Boolean] true when the gateway refuses until after the post's time-out.
+    def self.refusal_outlasts_timeout?(entry, now:, timeout_s:, retry_in:)
+      return false unless retry_in.is_a?(Integer) && retry_in.positive?
+
+      now + retry_in > entry["queued_at"].to_i + timeout_s
     end
 
     # What a pending entry needs now; the sweeper's rules.

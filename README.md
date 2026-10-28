@@ -93,7 +93,9 @@ przekierowaniami.
 4. W panelu administratora: **Ustawienia → Wtyczki**, filtr `minos`. Wpisz klucz i sekret,
    wybierz profil i zachowanie, na końcu włącz `minos_enabled`.
 5. Sprawdź **pulpit administratora**: jeśli czegoś brakuje albo brama odrzuca konfigurację
-   (np. zły klucz, profil spoza listy klucza), zobaczysz tam komunikat z kodem błędu.
+   (np. zły klucz, profil spoza listy klucza), zobaczysz tam komunikat z kodem błędu. Tam
+   też pojawia się informacja, do której godziny brama nie przyjmuje postów (wyczerpany
+   dobowy limit klucza, przeciążenie).
 
 ## Ustawienia
 
@@ -138,7 +140,12 @@ moderatora, a przy `fail-open` jest publikowany według werdyktu dla początku. 
 początek wymagał maskowania (`ocenzurowane`), zawsze czeka na moderatora — w obu trybach.
 
 Chwilowe przeciążenie bramy (odpowiedzi 429 i 503) nie jest awarią: wtyczka ponawia
-wysyłkę po czasie, który poda brama, a bez niego po 1, 2, 4… minutach.
+wysyłkę po czasie, który poda brama (najwyżej po 15 minutach), a bez niego po 1, 2, 4…
+minutach. Gdy brama odmawia na dłużej, niż post może czekać na werdykt
+(`minos_timeout_minutes`) — np. po wyczerpaniu dobowego limitu klucza — post od razu
+przechodzi w tryb awarii, bez czekania. Przy wyczerpanym limicie dobowym i przy
+przeciążeniu bramy pulpit administratora pokazuje, do której godziny (UTC) brama nie
+przyjmuje postów; komunikat znika o tej godzinie albo po pierwszej przyjętej wysyłce.
 
 Wyłączenie wtyczki niczego nie publikuje ani nie usuwa: wstrzymane posty zostają w
 kolejce przeglądu dla moderatorów.
