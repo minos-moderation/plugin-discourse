@@ -78,6 +78,11 @@ RSpec.describe "The plugin's locale files" do
     rows.each { |row| expect(report.dig("rows", row)).to be_a(String), "row #{row}" }
   end
 
+  it "gives the note about a cut post the shared wording (shared plugin rule S4b)" do
+    reason = tree("server", "pl_PL").dig("minos_moderation", "reasons", "truncated")
+    expect(reason).to eq("wpis dłuższy niż 3000 znaków — oceniono początek")
+  end
+
   it "has a text for every problem the dashboard may show" do
     problems = tree("server", "pl_PL").dig("minos_moderation", "problems")
     %w[
