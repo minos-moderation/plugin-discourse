@@ -565,6 +565,13 @@ Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 
 ## Assumptions and limitations
 
+- The shared pause (`Store.pause`) is lifted on a change of the key or the gateway's
+  address only while the plugin is enabled: `on(:site_setting_changed)` runs its block
+  only then, so a key changed while the plugin is off leaves the old pause in force until
+  it ends (a day at most), or until a 202. And every post deferred by a pause is due at
+  the same second T: when it ends, they are all sent at once, which may meet the next
+  full queue or limit. Spreading them, or one trial request first, is a possible
+  follow-up; it is not done.
 - The gateway's masks keep the sent text's length (one `█` per masked character). A mask
   that does not map exactly leaves the post to the moderators; it never publishes.
 - Edits of published posts are not sent; only new posts and new topics are.

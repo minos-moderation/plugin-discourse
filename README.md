@@ -188,10 +188,11 @@ który poda brama, a bez niego po 1, 2, 4… minutach (najwyżej po 15). Na ten 
 przerwy, nie wysyłając zapytań, więc pełna kolejka albo wyczerpany limit kosztuje jedno
 odrzucone zapytanie, a nie jedno na post. Pierwsza przyjęta wysyłka kończy przerwę, a
 zmiana klucza (`minos_api_key`) albo adresu bramy (`minos_gateway_url`) kończy ją od razu,
-razem z komunikatem o limicie. Gdy
-brama odmawia na dłużej, niż post może czekać na werdykt (`minos_timeout_minutes`) — np.
-po wyczerpaniu dobowego limitu klucza — post od razu przechodzi w tryb awarii, bez
-czekania i bez zapytania. Każda inna odmowa bramy (inny kod 4xx, przekierowanie) to błąd
+razem z komunikatem o limicie — ale tylko przy włączonej wtyczce: zmiana dokonana, gdy
+wtyczka jest wyłączona, przerwy nie kończy (trwa wtedy do swojego końca, najwyżej dobę).
+Po przerwie wszystkie odłożone posty są wysyłane naraz. Gdy brama odmawia na dłużej, niż
+post może czekać na werdykt (`minos_timeout_minutes`) — np. po wyczerpaniu dobowego
+limitu klucza — post od razu przechodzi w tryb awarii, bez czekania i bez zapytania. Każda inna odmowa bramy (inny kod 4xx, przekierowanie) to błąd
 konfiguracji: post przechodzi w tryb awarii, a pulpit administratora pokazuje kod. Przy
 wyczerpanym limicie dobowym i przy przeciążeniu bramy pulpit administratora pokazuje, do
 której godziny (UTC) brama nie przyjmuje postów; komunikat znika o tej godzinie albo po
