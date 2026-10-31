@@ -29,9 +29,9 @@ module MinosModeration
     # (`mask_unmappable`, `title_masked`, `topic_closed`, `action_failed`, `apply_stuck`).
     # Each but `verdict` has a text under `minos_moderation.reasons` in the locales.
     REASONS = %i[
-      verdict core_hold edited unassessed timeout limit config no_text truncated
-      censored_setting no_masked_text mask_unmappable title_masked blocked_setting support
-      topic_closed action_failed apply_stuck person_acted
+      verdict core_hold edited unassessed timeout limit config no_text extraction_failed
+      truncated censored_setting no_masked_text mask_unmappable title_masked blocked_setting
+      support topic_closed action_failed apply_stuck person_acted
     ].freeze
 
     # Seconds a finished entry is kept, to recognise a late repeated delivery.
@@ -115,7 +115,8 @@ module MinosModeration
     # moderators, with a note — approving it would also unsilence an auto-silenced author.
     #
     # @param settings [Hash{String => String}] as in {for_verdict}.
-    # @param reason [Symbol] `:unassessed`, `:timeout`, `:limit`, `:config` or `:no_text`.
+    # @param reason [Symbol] `:unassessed`, `:timeout`, `:limit`, `:config`, `:no_text` or
+    #   `:extraction_failed`.
     # @param support [Boolean] whether a verdict set `wsparcie` anyway.
     # @param core_hold [Boolean] whether Discourse itself held the post for review.
     # @param edited [Boolean] whether the post changed in the queue after it was sent.

@@ -70,6 +70,7 @@ en:
       limit: "brama odmówiła przyjęcia posta na dłużej, niż post może czekać na werdykt (np. wyczerpany dobowy limit klucza)"
       config: "błąd konfiguracji wtyczki; szczegóły są na pulpicie administratora"
       no_text: "post nie zawiera tekstu do oceny"
+      extraction_failed: "nie udało się odczytać tekstu posta, więc nic nie zostało wysłane do oceny"
       truncated: "oceniono tylko pierwsze 3000 znaków posta"
       censored_setting: "ustawienie minos_censored_action każe zostawiać takie posty moderatorom"
       no_masked_text: "brama nie przysłała zamaskowanej wersji posta"

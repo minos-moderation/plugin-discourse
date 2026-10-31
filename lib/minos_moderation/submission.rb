@@ -70,7 +70,8 @@ module MinosModeration
       end
 
       raw = reviewable.payload["raw"].to_s
-      text = Text.for_submission(raw, reviewable.payload["title"])
+      text = extract(raw, reviewable.payload["title"])
+      return VerdictApplier.new(@id).apply_failure(:extraction_failed) unless text
       return VerdictApplier.new(@id).apply_failure(:no_text) if text[:text].empty?
 
       Store.update(@id) do |entry|
@@ -120,6 +121,23 @@ module MinosModeration
           )
         end
       claimed && claimed["attempt"]
+    end
+
+    # The text to send, or nil when reading it failed. A text the plugin failed to extract
+    # is not an empty text (shared plugin rule F7): the caller applies the failure mode at
+    # once and sends nothing, instead of a job that fails again until the time-out. The
+    # log names the error's class only, never its message, which could quote the post.
+    #
+    # @param raw [String] the post's raw Markdown.
+    # @param title [String, nil] the topic's title, for a new topic.
+    # @return [Hash{Symbol => Object}, nil] `Text.for_submission`'s result, or nil.
+    def extract(raw, title)
+      Text.for_submission(raw, title)
+    rescue StandardError => e
+      ::Rails.logger.warn(
+        "[#{PLUGIN_NAME}] reading the text of reviewable #{@id} failed (#{e.class.name}), not sent",
+      )
+      nil
     end
 
     # Keeps a due post from being sent while the gateway is paused: it waits for the end of

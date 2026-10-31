@@ -220,7 +220,9 @@ reader can see is dropped; where removing something is not certain, more is sent
   the reader sees (linkify, an autolink, `[url]…[/url]`) is text. An alt text or a title
   is still sent next to the post's own words (S1), and what is sent for a post with
   text does not change. When the check raises (`RegexpError`), the post counts as text:
-  more is sent, never less. `spec/fixtures/no_text.json` holds the cases, the S8a
+  more is sent, never less. When the extraction itself raises anything else, the text is
+  not an empty one: `Submission#extract` logs the error's class (never its message) and
+  applies the failure mode at once (`extraction_failed`), with no request. `spec/fixtures/no_text.json` holds the cases, the S8a
   review's nine probes among them; both tiers read it, the Discourse one against
   `PrettyText.cook`.
 
@@ -268,7 +270,7 @@ and S8b.
 | `F5c` | a `ponow_za_s` past the time-out: the failure mode at once | `Decision.refusal_outlasts_timeout?` with the uncapped `ponow_za_s`, `Submission#retry_later`, `#defer`; `spec/lib/decision_spec.rb` "gives the failure mode at once to a refusal that ends after the post's time-out", `spec/jobs/minos_submit_spec.rb` "a daily limit that ends after the post's time-out" |
 | `F5d` | optional: re-send what fail-open published unassessed once the limit renews | odstępstwo: not implemented (optional and off by default; outside minos-moderation/minos#71, no issue yet) |
 | `F6` | a failing row never stops a loop | `Sweep.run` (a `rescue` per entry, logged by step, reviewable and exception class); odstępstwo: no test of a failing entry yet (no issue) |
-| `F7` | no text to assess (a title alone, only an image, a video, an attachment or a link without a label, an image's `alt` notwithstanding), or a failed extraction: the failure mode; a bare URL the reader sees is text | `Text.own_text?`, `Text::OWN_MARKUP`, `Text::NOT_TEXT`, `Submission#run` (`no_text`); `spec/lib/text_spec.rb` "a post with no text of its own", `spec/fixtures/no_text.json`, `spec/lib/mock_gateway_spec.rb`, `spec/integration/text_reader_view_spec.rb`. Odstępstwo: an extraction that raises gives the failure mode only at the time-out (the job fails, the sweeper resends, then times out), not at once (no issue) |
+| `F7` | no text to assess (a title alone, only an image, a video, an attachment or a link without a label, an image's `alt` notwithstanding), or a failed extraction: the failure mode; a bare URL the reader sees is text | `Text.own_text?`, `Text::OWN_MARKUP`, `Text::NOT_TEXT`, `Submission#run` (`no_text`); `spec/lib/text_spec.rb` "a post with no text of its own", `spec/fixtures/no_text.json`, `spec/lib/mock_gateway_spec.rb`, `spec/integration/text_reader_view_spec.rb`; a failed extraction (any exception) → `Submission#extract`, the failure mode at once (`extraction_failed`), the error's class alone in the log; `spec/jobs/minos_submit_spec.rb` "applies the failure mode at once when the text cannot be read" |
 | `F8` | switched on without a usable configuration: the failure mode; a fresh install is off | `minos_enabled` off by default; no key, no webhook secret or an unusable address → `Submission#run` applies `config` at once, without a request; `MinosGatewayProblem` on the dashboard; `spec/jobs/minos_submit_spec.rb` "applies the failure mode at once when the key is missing", "… when the webhook secret is missing". Odstępstwo: the notice is on the admin dashboard, not on every admin page (issue: w rejestracji) |
 | `F9` | switched on again: what waited is re-sent with a fresh time-out | odstępstwo: not implemented — switched on again, the sweeper gives every entry past its time-out the failure mode (no issue) |
 | `S1` | `tekst` is what the reader sees, `title`/`alt` included; nothing hidden is added | `Text.for_submission` ("What `tekst` is" above); `spec/fixtures/reader_view.json` in `spec/lib/text_spec.rb` and `spec/integration/text_reader_view_spec.rb` (`PrettyText.cook`) |

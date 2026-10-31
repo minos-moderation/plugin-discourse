@@ -269,7 +269,8 @@ Do bramy trafia, dla każdego wstrzymanego posta:
   film, załącznik albo link bez widocznego opisu, ewentualnie ze znakami niewidocznymi
   (np. spacja zerowej szerokości, miękki dywiz) — nie jest wysyłany wcale, nawet z
   tytułem tematu: brama nie ocenia obrazów, a sam adres nie jest treścią. Taki post
-  przechodzi w tryb awarii (`minos_failure_mode`). Adres wpisany wprost i widoczny dla
+  przechodzi w tryb awarii (`minos_failure_mode`), tak samo jak post, którego tekstu nie
+  udało się odczytać z powodu błędu (w logu zostaje wtedy tylko nazwa klasy błędu). Adres wpisany wprost i widoczny dla
   czytelnika (`https://…`) jest tekstem i jest wysyłany. Tekst alternatywny i tytuł
   obrazka idą tylko obok innych słów posta;
 - **profil** z ustawienia `minos_profile`;

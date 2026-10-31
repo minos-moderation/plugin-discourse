@@ -381,6 +381,25 @@ RSpec.describe Jobs::MinosSubmit do
     expect(entry).to include("status" => "done", "reason" => "config")
   end
 
+  it "applies the failure mode at once when the text cannot be read, and logs no message" do
+    allow(MinosModeration::Text).to receive(:for_submission).and_raise(
+      ArgumentError,
+      "komunikat z fragmentem posta",
+    )
+    stub = answer(202)
+    logger = track_log_messages { run_job }
+    expect(stub).not_to have_been_requested
+    expect(reviewable.reload).to be_pending
+    expect(entry).to include(
+      "status" => "done",
+      "outcome" => "leave",
+      "reason" => "extraction_failed",
+    )
+    logged = logger.warnings.join("\n")
+    expect(logged).to include("ArgumentError")
+    expect(logged).not_to include("komunikat z fragmentem posta")
+  end
+
   it "applies the failure mode at once when the webhook secret is missing, without sending" do
     SiteSetting.minos_webhook_secret = ""
     stub = answer(202)
