@@ -106,5 +106,14 @@
   {"name": "a definition in a list item", "raw": "Ty [ku][1]rwa jedna\n\n- [1]:\n  https://e.example", "sent": "Ty kurwa 1 jedna\n\n- [1]:\n  https://e.example", "reader": "Ty kurwa jedna"},
   {"name": "an empty list item ends a definition's label line", "raw": "Ty [ku][1]rwa jedna\n\n[1]:\n-", "sent": "Ty [ku][1]rwa jedna\n\n[1]:\n-", "reader": "Ty [ku][1]rwa jedna\n[1]:"},
   {"name": "a table without spaces ends a definition's label line", "raw": "Ty [ku][1]rwa jedna\n\n[1]:\n|a|b|\n|-|-|", "sent": "Ty [ku][1]rwa jedna\n\n[1]:\n|a|b|\n|-|-|", "reader": "Ty [ku][1]rwa jedna\n[1]:\na\nb"},
-  {"name": "a definition only at the start of a line", "raw": "Tekst [a]: https://e.example\n\nTy [ku][a]rwa jedna", "sent": "Tekst [a]: https://e.example\n\nTy [ku][a]rwa jedna", "reader": "Tekst [a]: https://e.example\nTy [ku][a]rwa jedna"}
+  {"name": "a definition only at the start of a line", "raw": "Tekst [a]: https://e.example\n\nTy [ku][a]rwa jedna", "sent": "Tekst [a]: https://e.example\n\nTy [ku][a]rwa jedna", "reader": "Tekst [a]: https://e.example\nTy [ku][a]rwa jedna"},
+  {"name": "a definition's next line is a thematic break, not its address", "raw": "Ty [ku][1]rwa jedna\n\n[1]:\n***", "sent": "Ty [ku][1]rwa jedna\n\n[1]:\n***", "reader": "Ty [ku][1]rwa jedna\n[1]:"},
+  {"name": "a definition's next line is an empty heading, not its address", "raw": "Ty [ku][1]rwa jedna\n\n[1]:\n#", "sent": "Ty [ku][1]rwa jedna\n\n[1]:\n#", "reader": "Ty [ku][1]rwa jedna\n[1]:"},
+  {"name": "a definition's next line opens an HTML block, not its address", "raw": "Ty [ku][1]rwa jedna\n\n[1]:\n<div>", "sent": "Ty [ku][1]rwa jedna\n\n[1]:", "reader": "Ty [ku][1]rwa jedna\n[1]:"},
+  {"name": "a definition's next line is a closed quote block, not its address", "raw": "Ty [ku][1]rwa jedna\n\n[1]:\n[quote]\nslowo\n[/quote]", "sent": "Ty [ku][1]rwa jedna\n\n[1]:\n\nslowo", "reader": "Ty [ku][1]rwa jedna\n[1]:\nslowo"},
+  {"name": "a definition's address indented four columns is still its address", "raw": "Ty [ku][1]rwa jedna\n\n[1]:\n    -", "sent": "Ty kurwa 1 jedna\n\n[1]:\n    -", "reader": "Ty kurwa jedna"},
+  {"name": "a definition's next line in a deeper blockquote is not its address", "raw": "Ty [ku][1]rwa jedna\n\n[1]:\n> https://e.example", "sent": "Ty [ku][1]rwa jedna\n\n[1]:\nhttps://e.example", "reader": "Ty [ku][1]rwa jedna\n[1]:\nhttps://e.example"},
+  {"name": "a label with no address continues as a paragraph, not as code", "raw": "Ty jedna\n\n[1]:\n    *ku*rwa x y", "sent": "Ty jedna\n\n[1]:\n    kurwa x y", "reader": "Ty jedna\n[1]:\nkurwa x y"},
+  {"name": "a label alone at the end of a post is no definition", "raw": "Ty [ku][1]rwa jedna\n\n[1]:", "sent": "Ty [ku][1]rwa jedna\n\n[1]:", "reader": "Ty [ku][1]rwa jedna\n[1]:"},
+  {"name": "a definition's next line opens a details tag, even an unclosed one", "raw": "Ty [ku][1]rwa jedna\n\n[1]:\n[details=x]", "sent": "Ty [ku][1]rwa jedna\n\n[1]:\n[details=x]", "reader": "Ty [ku][1]rwa jedna\n[1]:\n[details=x]"}
 ]

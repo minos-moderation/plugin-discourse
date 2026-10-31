@@ -4,13 +4,20 @@ module MinosModeration
   # Sends one held post to the gateway (`Jobs::MinosSubmit`) and records what came back.
   #
   # The contract's rules for an answer: `202` means the verdict will be delivered to the
-  # webhook; `429` and `503` (and a timeout or a `5xx`) mean "keep it pending and send it
-  # again after `ponow_za_s`, or after a backoff" — unless `ponow_za_s` ends after the
-  # post's time-out, when the failure mode applies at once; any other `4xx` is a
-  # configuration error that sending again cannot fix, so the failure mode decides the
-  # post and the administrator sees the code on the dashboard. A daily limit or an
-  # overload (`Scores::LIMITS`) is shown there too, with the time it ends, until the next
-  # `202`. The log gets the status and the code, never the text, the key or the body.
+  # webhook; `429` and `503` (and a timeout, any `5xx` or a `2xx` that accepted nothing)
+  # mean "keep it pending and send it again after `ponow_za_s`, or after a backoff" —
+  # unless `ponow_za_s` ends after the post's time-out, when the failure mode applies at
+  # once; any other `4xx` is a configuration error that sending again cannot fix, so the
+  # failure mode decides the post and the administrator sees the code on the dashboard. A
+  # daily limit or an overload (`Scores::LIMITS`) is shown there too, with the time it
+  # ends, until the next `202`. The log gets the status and the code, never the text, the
+  # key or the body.
+  #
+  # A refusal to be retried also pauses every other post (shared plugin rule F5a,
+  # `Decision.pause_until`): until the pause ends, a due post is not sent but deferred to
+  # its end, or gets the failure mode at once when the gateway's `ponow_za_s` ends after
+  # the post's time-out. So a full queue or a spent limit costs one refused request, not
+  # one per post.
   class Submission
     # Creates a post's entry and schedules its first attempt.
     #
@@ -43,6 +50,10 @@ module MinosModeration
     def run
       return unless Settings.enabled?
 
+      now = Time.now.to_i
+      pause = Store.pause
+      return defer(pause, now) if Decision.paused_until(pause, now: now)
+
       attempt = claim
       return unless attempt
 
@@ -51,10 +62,16 @@ module MinosModeration
 
       endpoint = Scores.endpoint(Settings.gateway_url)
       key = Settings.api_key
-      return VerdictApplier.new(@id).apply_failure(:config) if endpoint.nil? || key.empty?
+      # Without a usable address, key or webhook secret nothing is sent (shared plugin rule
+      # F8): without the secret no verdict could be taken, so the text would leave the
+      # forum for nothing and the post would reach the failure mode only at its time-out.
+      if endpoint.nil? || key.empty? || Settings.webhook_secret.empty?
+        return VerdictApplier.new(@id).apply_failure(:config)
+      end
 
       raw = reviewable.payload["raw"].to_s
-      text = Text.for_submission(raw, reviewable.payload["title"])
+      text = extract(raw, reviewable.payload["title"])
+      return VerdictApplier.new(@id).apply_failure(:extraction_failed) unless text
       return VerdictApplier.new(@id).apply_failure(:no_text) if text[:text].empty?
 
       Store.update(@id) do |entry|
@@ -93,13 +110,7 @@ module MinosModeration
       now = Time.now.to_i
       claimed =
         Store.update(@id) do |entry|
-          due =
-            (entry["status"] == "queued" && entry["retry_at"].to_i <= now) ||
-              (
-                entry["status"] == "sending" &&
-                  now - entry["sending_at"].to_i > Decision::STALE_SENDING_S
-              )
-          next nil unless due
+          next nil unless Decision.due?(entry, now: now)
 
           attempt = entry["attempts"].to_i + 1
           entry.merge(
@@ -110,6 +121,60 @@ module MinosModeration
           )
         end
       claimed && claimed["attempt"]
+    end
+
+    # The text to send, or nil when reading it failed. A text the plugin failed to extract
+    # is not an empty text (shared plugin rule F7): the caller applies the failure mode at
+    # once and sends nothing, instead of a job that fails again until the time-out. The
+    # log names the error's class only, never its message, which could quote the post.
+    #
+    # @param raw [String] the post's raw Markdown.
+    # @param title [String, nil] the topic's title, for a new topic.
+    # @return [Hash{Symbol => Object}, nil] `Text.for_submission`'s result, or nil.
+    def extract(raw, title)
+      Text.for_submission(raw, title)
+    rescue StandardError => e
+      ::Rails.logger.warn(
+        "[#{PLUGIN_NAME}] reading the text of reviewable #{@id} failed (#{e.class.name}), not sent",
+      )
+      nil
+    end
+
+    # Keeps a due post from being sent while the gateway is paused: it waits for the end of
+    # the pause, or gets the failure mode now when the gateway's own `ponow_za_s` ends after
+    # the post's time-out (shared plugin rule F5c). No request is made.
+    #
+    # @param pause [Hash{String => Object}] `Store.pause`, in force.
+    # @param now [Integer] the clock, in seconds.
+    # @return [void]
+    def defer(pause, now)
+      resume = pause["until"]
+      retry_in = pause["gateway"] == true ? resume - now : nil
+      timeout_s = Settings.timeout_s
+      too_late = false
+      deferred =
+        Store.update(@id) do |entry|
+          next nil unless Decision.due?(entry, now: now)
+
+          too_late =
+            Decision.refusal_outlasts_timeout?(
+              entry,
+              now: now,
+              timeout_s: timeout_s,
+              retry_in: retry_in,
+            )
+          next nil if too_late
+
+          entry.merge("status" => "queued", "retry_at" => resume)
+        end
+      if too_late
+        ::Rails.logger.warn(
+          "[#{PLUGIN_NAME}] the gateway refuses until after the post's time-out: " \
+            "reviewable #{@id}, not sent",
+        )
+        return VerdictApplier.new(@id).apply_failure(:limit)
+      end
+      ::Jobs.enqueue_in(resume - now, :minos_submit, reviewable_id: @id) if deferred
     end
 
     # The registrable domains the post links to, images included, for `link_domains`.
@@ -156,11 +221,15 @@ module MinosModeration
     def accepted
       now = Time.now.to_i
       Store.update(@id) do |entry|
-        # A fast gateway may have delivered the verdict already: keep what it recorded.
-        next nil unless entry["status"] == "sending"
-
-        entry.merge("status" => "submitted", "submitted_at" => now)
+        if entry["status"] == "sending"
+          entry.merge("status" => "submitted", "submitted_at" => now)
+        elsif !entry["submitted_at"].is_a?(Integer)
+          # A fast gateway may have delivered the verdict already: keep what it recorded,
+          # and note only when the gateway accepted the post (`Metrics`).
+          entry.merge("submitted_at" => now)
+        end
       end
+      # Also lifts the shared pause: the gateway takes requests again.
       Store.clear_problem
     end
 
@@ -185,6 +254,17 @@ module MinosModeration
         entry.merge("status" => "queued", "retry_at" => now + delay)
       end
       record_limit(outcome, now)
+      Store.record_pause(
+        until_at:
+          Decision.pause_until(
+            now: now,
+            retry_in: outcome.retry_in,
+            delay: delay || Scores.backoff(1),
+          ),
+        gateway: !outcome.retry_in.nil?,
+        http: outcome.http,
+        code: outcome.code,
+      )
       if too_late
         log("refuses until after the post's time-out", outcome)
         return VerdictApplier.new(@id).apply_failure(:limit)

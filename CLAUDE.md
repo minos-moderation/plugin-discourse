@@ -15,6 +15,9 @@ the gateway delivers to a signed webhook. Part of Minos; its backlog item is
 - Ruby implements the verification (`lib/minos_moderation/signature.rb`) and tests it on
   the gateway's signature vector, copied byte for byte (`spec/fixtures/signature.json`).
 - Only the sent text and two spam signals leave the forum: never an e-mail, IP or user id.
+- The shared plugin rules (F1…D2) are `docs/plugin-behaviour.md` in
+  `minos-moderation/client-php`; a change to one rule is a decision for every plugin, not
+  for this one. Their compliance table: `docs/development.md`.
 
 ## Code
 - Code, comments and commits in English. Everything an administrator or a user reads is

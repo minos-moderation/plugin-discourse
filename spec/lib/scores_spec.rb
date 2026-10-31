@@ -215,9 +215,35 @@ RSpec.describe "MinosModeration::Scores" do
       end
     end
 
-    it "does not take a redirect or an unexpected success for an acceptance" do
-      [200, 201, 204, 301, 302].each do |status|
+    it "accepts only 202: any other success is retried after a backoff (shared rule F5a)" do
+      [200, 201, 203, 204, 206, 299].each do |status|
+        outcome = scores.classify(status, '{"przyjete":["discourse:7.1"]}')
+        expect([outcome.kind, outcome.retry_in]).to eq([:retry, nil]), status.to_s
+      end
+    end
+
+    it "does not take a redirect for an acceptance, nor retry it" do
+      [301, 302, 307, 308].each do |status|
         expect(scores.classify(status, "").kind).to eq(:config_error), status.to_s
+      end
+    end
+
+    it "reads every status by the rule: 202 accepts, 2xx/408/429/5xx retry, the rest is wrong" do
+      kinds =
+        (100..599).to_h do |status|
+          [status, scores.classify(status, "").kind]
+        end
+      expect(kinds.values.uniq).to contain_exactly(:accepted, :retry, :config_error)
+      kinds.each do |status, kind|
+        expected =
+          if status == 202
+            :accepted
+          elsif (200..299).cover?(status) || [408, 429].include?(status) || status >= 500
+            :retry
+          else
+            :config_error
+          end
+        expect(kind).to eq(expected), status.to_s
       end
     end
 

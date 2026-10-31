@@ -44,6 +44,18 @@ module MinosModeration
       SiteSetting.minos_skip_staff
     end
 
+    # The administrator's scope: which new posts the plugin holds and sends.
+    #
+    # @return [Hash{String => Object}] `Decision.scope_settings` of `minos_categories`,
+    #   `minos_exempt_groups` and `minos_max_trust_level`.
+    def self.scope
+      Decision.scope_settings(
+        categories: SiteSetting.minos_categories,
+        exempt_groups: SiteSetting.minos_exempt_groups,
+        max_trust_level: SiteSetting.minos_max_trust_level,
+      )
+    end
+
     # The settings that decide what happens to a post, in the shape `Decision` reads.
     #
     # @return [Hash{String => String}] `failure_mode`, `censored_action`, `blocked_action`.

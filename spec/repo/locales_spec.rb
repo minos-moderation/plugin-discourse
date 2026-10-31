@@ -2,6 +2,7 @@
 
 require "yaml"
 require_relative "../../lib/minos_moderation/decision" unless defined?(MinosModeration::Decision)
+require_relative "../../lib/minos_moderation/metrics" unless defined?(MinosModeration::Metrics)
 
 # The plugin speaks Polish only. Discourse falls back to `en`, so the `en` files carry the
 # same Polish text as `pl_PL`, key for key (docs/development.md, "Locales"). Plain Ruby: it
@@ -63,6 +64,23 @@ RSpec.describe "The plugin's locale files" do
     actions.each do |action|
       expect(texts.dig("actions", action)).to be_a(String), "action #{action}"
     end
+  end
+
+  it "has a text for every row and label of the administrator's report" do
+    report = tree("server", "pl_PL").dig("reports", "minos_moderation")
+    expect(report).to be_a(Hash)
+    %w[title description seconds minutes no_data].each do |key|
+      expect(report[key]).to be_a(String), key
+    end
+    %w[measure value].each { |key| expect(report.dig("labels", key)).to be_a(String), key }
+    rows = MinosModeration::Metrics::ROWS.map(&:first)
+    expect(rows).not_to be_empty
+    rows.each { |row| expect(report.dig("rows", row)).to be_a(String), "row #{row}" }
+  end
+
+  it "gives the note about a cut post the shared wording (shared plugin rule S4b)" do
+    reason = tree("server", "pl_PL").dig("minos_moderation", "reasons", "truncated")
+    expect(reason).to eq("wpis dłuższy niż 3000 znaków — oceniono początek")
   end
 
   it "has a text for every problem the dashboard may show" do

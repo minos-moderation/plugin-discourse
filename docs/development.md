@@ -8,8 +8,8 @@ plugin. The gateway's contract, from the client's side, is `docs/contract.md` in
 
 | Path | What |
 |---|---|
-| `plugin.rb` | Metadata, `enabled_site_setting :minos_enabled`, the `NewPostManager` handler, the problem check |
-| `config/settings.yml` | The ten settings, all under `plugins:` |
+| `plugin.rb` | Metadata, `enabled_site_setting :minos_enabled`, the `NewPostManager` handler, the problem check, the report |
+| `config/settings.yml` | The thirteen settings, all under `plugins:` |
 | `config/locales/` | Server and client strings, Polish, for `pl_PL` and `en` (see "Locales") |
 | `config/routes.rb` | `POST /minos/webhook`, through `MinosModeration::Engine` mounted at `/minos` |
 | `app/controllers/minos_moderation/webhooks_controller.rb` | The receiver: raw body, signature, parse, hand over, 200 |
@@ -21,59 +21,120 @@ plugin. The gateway's contract, from the client's side, is `docs/contract.md` in
 | `spec/requests/`, `spec/jobs/`, `spec/integration/` | The Discourse tier (plugin harness) |
 | `spec/fixtures/signature.json` | The gateway's signature vector, a byte-for-byte copy of client-php's `vectors/signature.json` |
 | `spec/fixtures/reader_view.json` | The corpus of posts whose sent text must hold every word a reader sees (both tiers) |
+| `spec/fixtures/no_text.json` | Posts with no text of their own (nothing sent) and controls with text (shared rule F7; both tiers) |
 | `lib/minos_moderation/html_entities.json` | HTML's named character references, the data `Text` decodes them with |
 | `.github/workflows/release.yml` | On a `v*` tag: checks `plugin.rb`'s version against the tag (`.github/scripts/check-release-version.sh`) and creates the GitHub Release |
 
 The standalone files (`signature.rb`, `webhook_payload.rb`, `scores.rb`, `text.rb`,
-`decision.rb`, `gateway_client.rb`) use plain Ruby and its standard library, so every
-rule that decides what is sent and what happens to a post is proven without Discourse.
-Every Discourse touch point sits in a thin class (`settings.rb`, `store.rb`,
+`decision.rb`, `gateway_client.rb`, `metrics.rb`) use plain Ruby and its standard library,
+so every rule that decides what is sent and what happens to a post is proven without
+Discourse. Every Discourse touch point sits in a thin class (`settings.rb`, `store.rb`,
 `new_post_handler.rb`, `submission.rb`, `receiver.rb`, `verdict_applier.rb`, `sweep.rb`,
-`minos_gateway_problem.rb`).
+`minos_gateway_problem.rb`, `verdict_report.rb`).
+
+## The administrator's report
+
+`plugin.rb` registers the report `minos_moderation` with `add_report` (Admin → Reports,
+"Minos — czas do werdyktu i werdykty"; staff only, listed while the plugin is enabled).
+`VerdictReport.fill` reads every entry and `Metrics.summary` computes, for the last seven
+days: the median (P50) and 95th percentile (P95, both nearest rank) of the seconds from
+the gateway's `202` (`submitted_at`, noted also when the verdict came first) to the
+verdict's delivery (`received_at`; a verdict that came before the `202` was noted counts
+as 0), how many posts were measured, one count per verdict value (`bezpieczne`,
+`ocenzurowane`, `zablokowane`, `nieocenione`, an unknown one as `nieocenione`) and the
+posts that finished without a verdict (the failure mode; not those a person handled
+first). Nothing new is stored and no request is made: the entries already keep the times
+and the verdict without its masked text, for 30 days. A table without dates
+(`dates_filtering = false`); its texts are `reports.minos_moderation.*` in the locales.
 
 ## A post's way through the plugin
 
 1. `NewPostHandler` (priority -100, after other plugins' handlers) holds the post with
    `manager.enqueue(:minos_pending)`, or lets `NewPostManager.default_handler` hold it when
    Discourse would hold it anyway (then `core_hold` is recorded and the verdict is only a
-   note). It skips a disabled plugin, staff (`minos_skip_staff`), bots and personal
-   messages. `Submission.enqueue` creates the entry and enqueues `Jobs::MinosSubmit`.
+   note). It skips a disabled plugin, staff (`minos_skip_staff`), bots, personal
+   messages and a post outside the administrator's scope (`Decision.in_scope?` over
+   `minos_categories`, a category or one above it; `minos_exempt_groups`;
+   `minos_max_trust_level`): such a post is Discourse's alone, published or held by its
+   rules, with no entry, no request and no verdict. Whatever cannot be told (an unknown
+   category, a setting that does not read as ids, a list whose categories were all
+   deleted) keeps the post in scope; nothing about the scope is sent. `Submission.enqueue` creates the entry and enqueues `Jobs::MinosSubmit`.
 2. `Submission#run` claims the entry (`queued` → `sending`) under `Store.lock` and numbers
    the attempt, reduces the post with `Text.for_submission` (title, blank line, the text
    a reader sees — see "What `tekst` is" below — first 3000 characters), stores the
    digest, builds the body with `Scores.request_body` (item id
    `discourse:<reviewable id>.<attempt>`, `links`, `author_first_post`, and
    `link_domains` from `Text.link_hosts` reduced with `PublicSuffix.domain`) and POSTs it
-   with `GatewayClient` over `FinalDestination::HTTP`. `Scores.classify` reads the answer:
-   `202` → `submitted`; `429`/`503`/`408`/`5xx`/no answer → `queued` again with
-   `retry_at` (`ponow_za_s`, or 60 s doubling to 15 minutes) and an `enqueue_in`, unless
-   the gateway's `ponow_za_s`, uncapped, ends after the post's time-out
-   (`Decision.refusal_outlasts_timeout?`, shared plugin rule 3(a)): then the failure mode
-   at once, reason `limit`; anything else → a configuration problem for the dashboard and
-   the failure mode. A `429` `limit_dobowy_klucza`, `limit_globalny_b2b` or
-   `kolejka_pelna` (`Scores::LIMITS`) also records `Store.limit` — the state and the time
-   until which the gateway refuses, from the uncapped `ponow_za_s` — which the dashboard
-   shows until that time or the next `202`.
+   with `GatewayClient` over `FinalDestination::HTTP`. `Scores.classify` reads the answer
+   (shared plugin rules F5a, F5b): only `202` accepts, → `submitted`;
+   `429`/`5xx`/`408`/any other `2xx`/no answer → `queued` again with `retry_at`
+   (`ponow_za_s`, or 60 s doubling to 15 minutes) and an `enqueue_in`, unless the
+   gateway's `ponow_za_s`, uncapped, ends after the post's time-out
+   (`Decision.refusal_outlasts_timeout?`, F5c): then the failure mode at once, reason
+   `limit`; any other status (another `4xx`, a redirect) → a configuration problem for the
+   dashboard and the failure mode. Every answer to be retried also records the shared
+   pause `Store.pause` (`Decision.pause_until`: now plus the uncapped `ponow_za_s`, or the
+   refused post's own delay; at most a day), and a never-shortened one: while it is in
+   force `Submission#run` sends nothing, but moves a due post to its end
+   (`retry_at` and an `enqueue_in`), or gives it the failure mode at once (reason `limit`)
+   when the gateway's `ponow_za_s` ends after the post's time-out. A full queue or a spent
+   limit thus costs one refused request, not one per post. A `429`
+   `limit_dobowy_klucza`, `limit_globalny_b2b` or `kolejka_pelna` (`Scores::LIMITS`)
+   also records `Store.limit` — the state and the time until which the gateway refuses,
+   from the uncapped `ponow_za_s` — which the dashboard shows until that time or the next
+   `202`. The next `202` clears the pause too, and a change of `minos_api_key` or
+   `minos_gateway_url` clears both (`Store.forget_refusals`, from `on(:site_setting_changed)`
+   in `plugin.rb`): they came for the old key or address.
 3. The webhook verifies and parses the delivery; `Receiver` moves a waiting entry to
-   `received` with the verdict and enqueues `Jobs::MinosApplyVerdict`. The current
+   `received` with the verdict and enqueues `Jobs::MinosApplyVerdict`. A post the
+   failure mode held after its time-out (`done`, `leave`, `timeout`:
+   `Decision.held_after_timeout?`) still waits while its review item is pending (shared
+   plugin rule A6): the late verdict is applied as if it had come in time (an edit in the
+   queue since then only notes it, `edited`); once a moderator approved or rejected the
+   post, the verdict is dropped with a 200 and the entry stays as it was. The current
    attempt's id is taken, and an earlier attempt's when its stored digest equals the
    current attempt's (`digests`, `Decision.verdict_for_entry?`: the same text was
    assessed); a repeat, any later verdict for the same post, an earlier attempt of another
    text (or of an entry written before per-attempt digests) and a foreign id are dropped
-   with a 200.
+   with a 200. Only a stored verdict gets a `2xx` (the gateway takes any `2xx` as
+   delivered and keeps no copy): a disabled plugin answers 404 (`requires_plugin`), and a
+   read-only forum (`Discourse.enable_readonly_mode`, a read-only database) answers 503
+   before the action runs (`ApplicationController#block_if_readonly_mode` raises
+   `Discourse::ReadOnly` for every request but `GET` and `HEAD`). The gateway retries a
+   failed delivery with a growing backoff for about 12.5 minutes after it accepted the
+   post; a read-only spell longer than that loses the verdict, and the post waits for
+   `minos_timeout_minutes` and the failure mode.
 4. `VerdictApplier#apply_verdict` asks `Decision.for_verdict` what to do and does it
    through the reviewable: `perform(system user, :approve_post)`, `update_fields` of the
-   queued `raw` (and `title`), a `reload` that must read the masks back exactly, followed
-   by `:approve_post`, `:reject_post`, or nothing. A `ReviewableNote` records the
-   outcome. The entry ends `done`.
+   queued `raw`, a `reload` that must read the masks back exactly, followed by
+   `:approve_post`, `:reject_post`, or nothing. A plugin never changes a title (shared
+   plugin rule S5): a mask on a new topic's title leaves the post to the moderators
+   (`title_masked`), and on a late verdict it is handled like a mask that cannot be
+   carried out (the post hidden, or kept and flagged with `wsparcie`). A `ReviewableNote`
+   records the outcome; when an `ocenzurowane` verdict's masks did not reach the post
+   (left by `minos_censored_action`, a cut text, masks that do not map or fall on the
+   title, a failed edit, or a published post hidden instead; never when the post was
+   edited since it was sent or a person acted on it: the masks are of an older text), a second note shows the gateway's masked text (shared
+   plugin rule A2d): `@` made inert with U+2060, control characters removed, cut to
+   `ReviewableNote::MAX_CONTENT_LENGTH` with an ellipsis; Discourse escapes a note's HTML
+   when it renders it (`PlaintextMentions#render`). The entry ends `done`.
 5. The failure mode (`Decision.for_failure`) never publishes a post Discourse held itself
    or a moderator edited. When it publishes one (fail-open), the entry ends
    `auto_published` with the post's id, and a verdict that still arrives goes through
-   `Decision.for_late_verdict`: `keep`, `mask` (`PostRevisor#revise!` as the system user)
+   `Decision.for_late_verdict`: `keep`, `mask` (`PostRevisor#revise!` as the system user,
+   a hidden revision: the original is for staff only)
    or `hide` (`Post#hide!`) — unless a person acted on the post since (deleted, hid,
    edited it, or reviewed a flag on it), whose decision stays. A verdict with `wsparcie`
    never hides the post (nor does a mask that cannot be carried out): it is kept, with
    the support note, because `Post#hide!` is a sanction and messages the author.
+   `wsparcie` is an active signal for the moderators whatever the verdict (shared plugin
+   rule A7): a post still held is in their review queue already, with the note; a post
+   that is published — on time (`approve`, `approve_masked`), late (`keep`, `mask`) or
+   kept when a verdict could not be applied — gets a `notify_moderators` flag by the system
+   user (`PostActionCreator.create`, a Polish message naming no content), a pending
+   `ReviewableFlaggedPost` in the same queue. Discourse sends the flag's message to the
+   moderators' group; nothing reaches the author. A post already deleted or hidden gets
+   no flag.
 6. `Sweep` applies `Decision.for_entry` to every entry: the failure mode after
    `minos_timeout_minutes` (never under `Decision::MIN_TIMEOUT_MINUTES`, 20, also for a
    lower value stored before that minimum: Discourse checks `min` only on write), a
@@ -147,6 +208,28 @@ reader can see is dropped; where removing something is not certain, more is sent
   except in code; decoded characters have no origin, so a mask on one holds the post.
 - Characters invisible by default (`\p{Default_Ignorable_Code_Point}`: a soft hyphen,
   zero-width spaces) go, from the title too.
+- **A post with no text of its own sends nothing** (shared plugin rule F7,
+  `Text.own_text?`): the same analysis is run through `Text::OWN_MARKUP`, `MARKUP`
+  without what is not the post's own text — images (Markdown, `<img>`, `[img]`, uploads,
+  videos and audio, alt texts and titles included), attachments
+  (`[name|attachment](upload://…) (12.3 KB)`), links with no text (`[](…)`), a link's
+  address, title and label, tooltips, and the lines that are only Markdown's syntax
+  (`Text::EMPTY_BLOCKS`: a thematic break, an empty heading or list item outside code and
+  HTML blocks, and a line of pipes, colons and dashes only on the lines of a table
+  markdown-it reads, `Reading#tables`; outside a table `|`, `| - |` or `|---|` is a
+  paragraph's text and is sent). When nothing of that is left but `Text::NOT_TEXT`
+  (format and control characters such as U+200B, U+00AD, U+2060, U+FEFF; separators and
+  white space; lone combining marks such as U+034F or U+FE0F; the Hangul and Braille
+  fillers; anything invisible by default), the sent text is empty, title included, and
+  `Submission` applies the failure mode (`no_text`) without a request. A bare address
+  the reader sees (linkify, an autolink, `[url]…[/url]`) is text. An alt text or a title
+  is still sent next to the post's own words (S1), and what is sent for a post with
+  text does not change. When the check raises (`RegexpError`), the post counts as text:
+  more is sent, never less. When the extraction itself raises anything else, the text is
+  not an empty one: `Submission#extract` logs the error's class (never its message) and
+  applies the failure mode at once (`extraction_failed`), with no request. `spec/fixtures/no_text.json` holds the cases, the S8a
+  review's nine probes among them; both tiers read it, the Discourse one against
+  `PrettyText.cook`.
 
 `spec/fixtures/reader_view.json` is the corpus: `spec/lib/text_spec.rb` checks the sent
 text of each entry and the property "every word a reader sees is a word of the sent
@@ -157,11 +240,69 @@ a post in flight at the upgrade: its verdict is then not applied (`edited`) and 
 moderator decides, the safe direction.
 
 State lives in `PluginStore` (`minos-moderation`, key `pending:<reviewable id>`, plus
-`problem` and `limit`); see `Store` for the fields. It never holds the unmasked text of a masked post
-(a digest at most): the reviewable's history and the post's revisions keep it where
-Discourse's own permissions guard it. Every read-modify-write of an entry runs under a
+`problem`, `limit` and `pause`); see `Store` for the fields. An entry is removed 30 days
+after it finished (shared plugin rule A8). It never holds the unmasked text of a masked
+post (a digest at most): the reviewable's history (a post masked in the queue) and a
+hidden revision of the post (a post masked after a fail-open publication,
+`PostRevisor#revise!(…, hidden: true)`) keep it where only staff can see it, also on a
+forum with `edit_history_visible_to_public`. Those, the plugin's notes on the review item
+and the support flag are Discourse's own records: they follow the forum's retention,
+not the plugin's 30 days, and the README names them. Every read-modify-write of an entry runs under a
 `DistributedMutex` per reviewable, so the job, the webhook and the sweeper never apply
 two outcomes to one post.
+
+## Shared plugin rules: compliance
+
+The rules every Minos plugin shares are `docs/plugin-behaviour.md` in
+`minos-moderation/client-php` (shared plugin rule D1); this plugin follows the version at
+the commit CI checks out (`.github/workflows/tests.yml`, e5df7d6, v0.2.0). A change to one
+rule is a decision for every plugin, made there first. The table maps each identifier, with
+its short name copied from the file's index, to the code and the test that implement it
+here, or to `odstępstwo: …` (a deviation) with the issue that closes it; a rule the
+plugin may leave out (optional, or adopted for later) says so without that word.
+`spec/lib/compliance_table_spec.rb` reads the file from `MINOS_CLIENT_PHP` and fails when an
+identifier is missing here (in CI a missing checkout fails too, as for the mock gateway).
+Starting point: the audit's matrix of 2026-10-27, checked again against the code after S8a
+and S8b.
+
+| Id | In short (client-php's index) | Discourse: code and test, or deviation |
+|---|---|---|
+| `F1` | fail-closed by default | `config/settings.yml` (`fail-closed`), `Decision.fail_open?` (anything else is closed); `spec/lib/decision_spec.rb` "never publishes a post without a known verdict unless fail-open is chosen exactly" |
+| `F2` | a time-out of at least 20 minutes | `Decision::MIN_TIMEOUT_MINUTES`, `Decision.timeout_s`, `min: 20`; `spec/repo/settings_yml_spec.rb`, `spec/jobs/minos_sweeper_spec.rb` "waits twenty minutes even when a lower timeout was stored" |
+| `F3` | switched off: 404, and nothing happens | `requires_plugin` (404), `Submission#run`, `Jobs::MinosSweeper`, `Jobs::MinosApplyVerdict` return while disabled; `spec/requests/webhooks_controller_spec.rb` "does not answer while the plugin is disabled", `spec/jobs/minos_sweeper_spec.rb` "does nothing while the plugin is disabled" |
+| `F4` | 401 without a usable secret | `WebhooksController#receive`; `spec/requests/webhooks_controller_spec.rb` "is refused while no webhook secret is set" |
+| `F5a` | retry 429, 5xx, 408, network failures and a 2xx that accepts nothing; only `202` accepts | `Scores.classify`, `Scores.classify_transport`, the shared pause (`Store.pause`, `Decision.pause_until`, `Submission#defer`); `spec/lib/scores_spec.rb` "reads every status by the rule", `spec/jobs/minos_submit_spec.rb` "the pause every post shares after a refusal" |
+| `F5b` | any other 4xx is a configuration error | `Scores.classify`, `Submission#refused` (`Store.record_problem`, the dashboard, the failure mode `config`); `spec/jobs/minos_submit_spec.rb` "a configuration error" |
+| `F5c` | a `ponow_za_s` past the time-out: the failure mode at once | `Decision.refusal_outlasts_timeout?` with the uncapped `ponow_za_s`, `Submission#retry_later`, `#defer`; `spec/lib/decision_spec.rb` "gives the failure mode at once to a refusal that ends after the post's time-out", `spec/jobs/minos_submit_spec.rb` "a daily limit that ends after the post's time-out" |
+| `F5d` | optional: re-send what fail-open published unassessed once the limit renews | not implemented: the rule is optional and off by default (nie wdrożono, reguła opcjonalna) |
+| `F6` | a failing row never stops a loop | `Sweep.run` (a `rescue` per entry, logged by step, reviewable and exception class); odstępstwo: no spec of an entry that fails yet (minos-moderation/minos#114) |
+| `F7` | no text to assess (a title alone, only an image, a video, an attachment or a link without a label, an image's `alt` notwithstanding), or a failed extraction: the failure mode; a bare URL the reader sees is text | `Text.own_text?`, `Text::OWN_MARKUP`, `Text::NOT_TEXT`, `Submission#run` (`no_text`); `spec/lib/text_spec.rb` "a post with no text of its own", `spec/fixtures/no_text.json`, `spec/lib/mock_gateway_spec.rb`, `spec/integration/text_reader_view_spec.rb`; a failed extraction (any exception) → `Submission#extract`, the failure mode at once (`extraction_failed`), the error's class alone in the log; `spec/jobs/minos_submit_spec.rb` "applies the failure mode at once when the text cannot be read" |
+| `F8` | switched on without a usable configuration: the failure mode; a fresh install is off | `minos_enabled` off by default; no key, no webhook secret or an unusable address → `Submission#run` applies `config` at once, without a request; `MinosGatewayProblem` on the dashboard; `spec/jobs/minos_submit_spec.rb` "applies the failure mode at once when the key is missing", "… when the webhook secret is missing". Odstępstwo: the notice is on the admin dashboard, not on every admin page (minos-moderation/minos#117) |
+| `F9` | switched on again: what waited is re-sent with a fresh time-out | odstępstwo: not implemented — switched on again, the sweeper gives every entry past its time-out the failure mode (minos-moderation/minos#115) |
+| `S1` | `tekst` is what the reader sees, `title`/`alt` included; nothing hidden is added | `Text.for_submission` ("What `tekst` is" above); `spec/fixtures/reader_view.json` in `spec/lib/text_spec.rb` and `spec/integration/text_reader_view_spec.rb` (`PrettyText.cook`) |
+| `S2` | links, domains, first post; never account data | `Scores.request_body` (`META_KEYS`), `Submission#link_domains`; `spec/lib/scores_spec.rb` "never carries an author's e-mail, IP address or id", `spec/jobs/minos_submit_spec.rb` "sends the text, the profile and two signals with the key, and nothing about the author" |
+| `S3` | an edit of a waiting post is `<id>.<n>`; an older revision's verdict is ignored | `Scores.item_id` (`discourse:<review item>.<attempt>`: the post does not exist while it waits), `Decision.verdict_for_entry?`, `VerdictApplier#changed_since_sent?`; `spec/requests/webhooks_controller_spec.rb` "drops a verdict for an earlier attempt". Odstępstwo: an edit in the queue (only staff can make one) is not sent again: the verdict is not applied (`edited`) and a moderator decides (minos-moderation/minos#116) |
+| `S4a` | above 3000 characters: the beginning is assessed, the decision is `nieocenione` | `Text::MAX_CHARS`, `Decision.for_verdict` (`truncated`); `spec/lib/decision_spec.rb` "a post only partly sent" |
+| `S4b` | the note about a cut post | `minos_moderation.reasons.truncated` ("wpis dłuższy niż 3000 znaków — oceniono początek", the rule's wording) in the note; `spec/repo/locales_spec.rb` "gives the note about a cut post the shared wording" |
+| `S4c` | `ocenzurowane` on a cut post is never applied automatically | `Decision.censored`, `Decision.late` (`truncated`); `spec/lib/decision_spec.rb` "leaves a censored head to the moderators under both modes" |
+| `S5` | a topic's title (a visible reply subject, a poll) is part of `tekst`; a title is never changed | `Text.submission` (title, blank line; a reply has no subject; a `[poll]` is in `raw`); `spec/lib/text_spec.rb` "a new topic's title"; a mask on the title holds the post (`VerdictApplier#title_masked?` in `#approve_masked` and `#mask`, reason `title_masked`); `spec/jobs/minos_apply_verdict_spec.rb` "on a new topic (shared plugin rule S5: a title is never changed)" |
+| `S6` | an edit of a published post is reassessed (after the capacity decision) | not implemented yet, as the rule itself allows until the gateway's capacity decision (K-38, K-44) |
+| `S7` | a post the platform holds is sent and annotated (after the capacity decision) | `NewPostHandler.call` (`core_hold`), `Decision.for_verdict` (`core_hold`: a note, never published); `spec/integration/new_post_handler_spec.rb` "lets Discourse hold a post it holds itself", `spec/jobs/minos_apply_verdict_spec.rb` "only notes the verdict on a post Discourse holds itself" |
+| `A1` | the digest of the sent text is checked before applying | `Submission#run` (`text_digest`, `digests`), `VerdictApplier#changed_since_sent?`, `#acted_on?` (`TextCleaner` normalisation); `spec/jobs/minos_apply_verdict_spec.rb` "leaves a post edited in the queue after it was sent", "still hides a post Discourse normalised on publication" |
+| `A2a` | a mask has the sent length and differs only in `█` | `Text.apply_masks`; `spec/lib/text_spec.rb` (masks), `spec/lib/mock_gateway_spec.rb` |
+| `A2b` | what was sent is what is stored | `Text.apply_masks` (the post must still reduce to the sent text); `spec/lib/text_spec.rb` |
+| `A2c` | the write is checked and read back | `VerdictApplier#stored?` (`reload`); `spec/jobs/minos_apply_verdict_spec.rb` "never approves when the masked text did not persist" |
+| `A2d` | the mask is shown to the moderator | `Decision.mask_note?`, `VerdictApplier#mask_note`; `spec/lib/decision_spec.rb` "the masked text in the moderators' note", `spec/jobs/minos_apply_verdict_spec.rb` "the gateway's masks shown to the moderators" |
+| `A2e` | never the original instead of a failed mask | `VerdictApplier#approve_masked` (`mask_unmappable`, `action_failed` leave the post); `spec/jobs/minos_apply_verdict_spec.rb` "leaves the post when the masks cannot be carried onto it" |
+| `A3` | fail-open is marked; a late verdict applies | `auto_published`, `VerdictApplier#apply_late`, `Decision.for_late_verdict`; `spec/jobs/minos_apply_verdict_spec.rb` "a late verdict for a post the failure mode published" |
+| `A4` | notifications once, sent by the plugin where approval sends none | `perform(:approve_post)` sends Discourse's own notifications; a late verdict publishes nothing again. Not verified: the "edited" notification a late mask sends the author through `PostRevisor` |
+| `A5` | a hold is the platform's own state | `ReviewableQueuedPost` (`NewPostManager#enqueue`); `spec/integration/new_post_handler_spec.rb` "holds a new reply as a queued post" |
+| `A6` | a late verdict also applies to a post the failure mode held | `Decision.held_after_timeout?`, `Receiver.accept`; `spec/jobs/minos_apply_verdict_spec.rb` "a verdict for a post the failure mode held after its time-out", `spec/requests/webhooks_controller_spec.rb` |
+| `A7` | `wsparcie` is an active signal for moderators, never an automatic removal | `VerdictApplier#signal_support` (a `notify_moderators` flag), `Decision` (never `reject` or `hide` with `wsparcie`); `spec/jobs/minos_apply_verdict_spec.rb` "wsparcie on a published post", `spec/lib/decision_spec.rb` "wsparcie over every combination" |
+| `A8` | the plugin's own data (the original, the verdicts) is kept 30 days; the platform's records follow the forum's rules | `Decision::PURGE_AFTER_S`, `Sweep` (`purge`); the original only in Discourse's records, for staff (`PostRevisor#revise!(…, hidden: true)`); README "Co wtyczka przechowuje i jak długo"; `spec/jobs/minos_sweeper_spec.rb` "forgets a finished entry after thirty days", `spec/jobs/minos_apply_verdict_spec.rb` "keeps the original in a revision staff can see and readers cannot" |
+| `P1` | the archive carries no lock file, tests or mock, and pins the client | n/d: Discourse installs the plugin from its git repository, with no archive, and the plugin runs no client-php code |
+| `D1` | this file is the one source; `CLAUDE.md` points at it, `docs/development.md` maps it | `CLAUDE.md` (one line), this table; `spec/lib/compliance_table_spec.rb` |
+| `D2` | shared compliance scenarios in `scenarios/` | odstępstwo: client-php has no scenarios yet (minos-moderation/minos#44, step 5) |
 
 ## Tests
 
@@ -185,9 +326,11 @@ git clone https://github.com/minos-moderation/client-php.git ../client-php
 MINOS_CLIENT_PHP=../client-php bundle exec rspec spec/lib/mock_gateway_spec.rb
 ```
 
-Without `MINOS_CLIENT_PHP` that group is skipped. CI's `standalone` job checks client-php
-out at a pinned commit of its main (`.github/workflows/tests.yml`, fb8d1ff at present),
-runs `composer install --no-dev` there, sets `MINOS_REQUIRE_MOCK_GATEWAY=1`, which turns
+Without `MINOS_CLIENT_PHP` that group is skipped, and so is
+`spec/lib/compliance_table_spec.rb`, which reads client-php's `docs/plugin-behaviour.md`
+from the same checkout (see "Shared plugin rules: compliance"). CI's `standalone` job
+checks client-php out at a pinned commit of its main (`.github/workflows/tests.yml`,
+e5df7d6 at present), runs `composer install --no-dev` there, sets `MINOS_REQUIRE_MOCK_GATEWAY=1`, which turns
 the skip into a failure, and then reads the JSON report: any pending example, or a
 mock-gateway example that did not pass, fails the job. The Discourse tier keeps the
 group pending: it runs inside Discourse's own test container through the reusable
@@ -313,8 +456,11 @@ was published unchecked. Delete it (keep the tag) and re-run the failed jobs. A 
 check publishes nothing: delete the tag, fix `main`, start again from step 1. By hand:
 `.github/scripts/check-release-version.sh v0.1.0` from the repository's root.
 
-The repository is private today: a forum cannot `git clone` it without credentials until
-it is made public.
+The repository is public, so a forum clones it without credentials. Until the first tag
+(`v0.1.0`, which the owner creates) the README installs from `main` and says that this is
+an interim state; once the tag exists, the install line names it
+(`git clone --branch v0.1.0 …`), so a forum takes nothing its administrator did not
+choose.
 
 Nothing in this repository enforces that only the owner tags (the session refusal lives
 outside GitHub): the owner should add a tag ruleset on `v*` that only they may bypass, or
@@ -326,11 +472,18 @@ Verified in Discourse's source (`main`, September 2026) or in
 `discourse-plugin-skeleton`:
 
 - plugin metadata comments, `enabled_site_setting`, `after_initialize`,
+  `on(:site_setting_changed)` (`Plugin::Instance#on`, called only while the plugin is
+  enabled; the event is triggered by every site setting change, with its name),
   `register_problem_check` (`lib/plugin/instance.rb`, `lib/plugin/metadata.rb`);
 - `config/settings.yml` keys `default`, `secret: true`, `type: enum` + `choices`,
   `min`/`max`, and descriptions via `site_settings.<name>` with `%{base_path}`; `min` is
   checked only when a value is written (`SiteSettings::TypeSupervisor#to_db_value`), a
-  stored value is read back as it is (`to_rb_value`);
+  stored value is read back as it is (`to_rb_value`); `type: category_list` and
+  `type: group_list` (ids joined by "|", no check that they exist) and
+  `enum: "TrustLevelSetting"` (0–4), as core's `config/site_settings.yml` uses them;
+  `Group::AUTO_GROUPS` (`everyone` 0, `logged_in_users` 5), `User#group_ids`,
+  `Category#parent_category`, and the `topic_id` / `category` arguments of
+  `NewPostManager` (`post_needs_approval_in_its_category?`) (`main`, 2026-10-28);
 - the engine and routes pattern, and the `Jobs` inflection of `app/jobs/regular` and
   `app/jobs/scheduled` (`config/initializers/000-zeitwerk.rb`);
 - `NewPostManager.add_handler(priority)`, `manager.enqueue(reason)`,
@@ -342,23 +495,47 @@ Verified in Discourse's source (`main`, September 2026) or in
   the object's in-memory `payload` through `create_options`), `update_fields` with a
   `payload` hash and its history entry (it assigns the payload, then returns `save`),
   `payload["raw"]` and `payload["title"]`,
-  `pending?`, `reviewable_notes` / `ReviewableNote::MAX_CONTENT_LENGTH`;
+  `pending?`, `reviewable_notes` / `ReviewableNote::MAX_CONTENT_LENGTH` (2000); a note's
+  content is plain text, rendered by `PlaintextMentions#render` (HTML-escaped, `@name`
+  linked and notified when preceded by a space, punctuation or a symbol) (`main`,
+  2026-10-28);
 - the score reason text `reviewables.reasons.<reason>` (`ReviewableScoreSerializer`);
 - `ProblemCheck` (realtime when `perform_every` is unset; `problem`, `no_problem`,
   `translation_data`, the key `dashboard.problem.<identifier>`);
+- `add_report(name) { |report| … }` (`Report.add_report` defines `report_<name>`),
+  `Report::MODES[:table]`, `report.modes`, `report.dates_filtering`, `report.labels`
+  (`property`, `title`), `report.data`, the texts `reports.<name>.title` and
+  `.description`, `GET /admin/reports/<name>.json` (`Admin::StaffController`) and the
+  list `Reports::ListQuery`, which shows a plugin's report while the plugin is enabled
+  (`main`, 2026-10-28);
 - `PluginStore.get/set/remove/cast_value`, `PluginStoreRow`, `DistributedMutex.synchronize`;
 - `Jobs::Base` (`sidekiq_options`), `Jobs::Scheduled` + `every`, `Jobs.enqueue`,
   `Jobs.enqueue_in`;
 - `FinalDestination::HTTP` (Net::HTTP with SSRF checks and pinned addresses);
+- `PostActionCreator.create(user, post, :notify_moderators, message:)` (a
+  `ReviewableFlaggedPost.needs_review!` item and a message to the `moderators` group from
+  the flagger, never to the author; the system user may flag, `User#in_any_groups?`
+  treats it as staff; a hidden post cannot be flagged), `PostActionType.types`
+  (`main`, 2026-10-28);
 - `Post#hide!(post_action_type_id)` with `PostActionType.types[:inappropriate]` (it
   also messages the author and hides a first post's topic), `Post.with_deleted`,
   `Post#version`, `PostRevisor#revise!(editor, fields, skip_validations:, bypass_bump:,
   bypass_rate_limiter:)` with an `edit_reason`, `ReviewableFlaggedPost` statuses;
+- `PostRevisor#revise!(…, hidden: true)` ("Force the created revision to be hidden from
+  non-staff users": `PostRevision#hidden`, `public_version` not raised),
+  `PostRevision#hide!`, `PostRevisionGuardian#can_see_post_revision?` (a hidden revision
+  only for `can_view_hidden_post_revisions?`, i.e. staff, before
+  `edit_history_visible_to_public` is read), `PostRevisionSerializer` leaving hidden
+  revisions out for non-staff, `PostsController#latest_revision` (`main`, 2026-10-28);
 - the per-IP limits `max_reqs_per_ip_per_10_seconds` (50), `max_reqs_per_ip_per_minute`
   (200) and `max_reqs_per_ip_mode` (`block`) in `config/discourse_defaults.conf`;
 - `public_suffix` in Discourse's `Gemfile.lock` (through `addressable`);
 - `ApplicationController` filters `verify_authenticity_token`, `check_xhr`,
-  `redirect_to_login_if_required`, `preload_json`, and `requires_plugin`;
+  `redirect_to_login_if_required`, `preload_json`, and `requires_plugin` (a disabled
+  plugin raises `PluginDisabled`, answered 404); `block_if_readonly_mode`
+  (`ReadOnlyMixin`: every request but `GET`/`HEAD` raises `Discourse::ReadOnly` while
+  `Discourse.readonly_mode?`, answered 503) and `Discourse.enable_readonly_mode` /
+  `disable_readonly_mode` (`main`, 2026-10-28);
 - spec helpers `fab!`, `expect_enqueued_with`, `track_log_messages`, the
   `reviewable_queued_post` and `reviewable_queued_post_topic` fabricators, WebMock with
   `allow_localhost`;
@@ -370,9 +547,14 @@ Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 - that the Discourse-tier specs added after the first CI run pass as written.
   `text_reader_view_spec.rb` ran against `PrettyText.cook` in CI (runs 40664872308 and
   40673051491): every entry passed but one, which showed that Discourse keeps `title` on
-  `span` (the chat plugin's allow list); `span` is now a tooltip tag. Run 40696799542
-  passed all 99 entries of that time; the 9 added after it (definitions ended by the
-  block on their next line) have not run there yet;
+  `span` (the chat plugin's allow list); `span` is now a tooltip tag. Run 40699706658
+  passed all 108 entries of that time. The 9 added in S8b (a definition's next line that
+  is a thematic break, an empty heading, an HTML block, a quote block or a details tag;
+  an address indented four columns; a next line in a deeper blockquote; a label without
+  an address continued as a paragraph; a label alone at the end), one for each branch of
+  `Text.definition_end?` and of the label's handling that no entry guarded, and the
+  `spec/fixtures/no_text.json` checks (F7) have not run there yet; their "reader" fields
+  come from markdown-it 15 with Discourse's `bbcode-block.js`;
 - `PublicSuffix.domain` is called as the gem documents it (nil for an invalid name); the
   plugin sends no `link_domains` when the constant is missing;
 - the exact oldest Discourse version with every API above (`ReviewableNote` in
@@ -386,6 +568,13 @@ Not verified (no Discourse checkout here; only CI runs the Discourse tier):
 
 ## Assumptions and limitations
 
+- The shared pause (`Store.pause`) is lifted on a change of the key or the gateway's
+  address only while the plugin is enabled: `on(:site_setting_changed)` runs its block
+  only then, so a key changed while the plugin is off leaves the old pause in force until
+  it ends (a day at most), or until a 202. And every post deferred by a pause is due at
+  the same second T: when it ends, they are all sent at once, which may meet the next
+  full queue or limit. Spreading them, or one trial request first, is a possible
+  follow-up; it is not done.
 - The gateway's masks keep the sent text's length (one `█` per masked character). A mask
   that does not map exactly leaves the post to the moderators; it never publishes.
 - Edits of published posts are not sent; only new posts and new topics are.
@@ -396,8 +585,6 @@ Not verified (no Discourse checkout here; only CI runs the Discourse tier):
   author Discourse's standard "post hidden" message.
 - Every gateway delivery counts against Discourse's per-IP request limit; bursts get 429
   and rely on the gateway's retries (README, "Limit żądań").
-- `wsparcie` on a published post is a note on a resolved review item, which moderators
-  see only in its history; a more visible alert is a follow-up.
 - Configuration errors reach the admin dashboard through a problem check; on a
   Discourse without `register_problem_check` they reach only the log.
 - The reduction of `tekst` models markdown-it and Discourse's BBCode rules; it is not

@@ -10,6 +10,51 @@ RSpec.describe "MinosModeration::Text" do
 
   let(:mask) { MinosModeration::Text::MASK }
 
+  describe "a post with no text of its own (shared plugin rule F7)" do
+    corpus =
+      JSON.parse(
+        File.read(File.expand_path("../fixtures/no_text.json", __dir__), encoding: "UTF-8"),
+      )
+
+    it "has both kinds of post, the review's nine probes among them" do
+      expect(corpus.count { |entry| entry["sends"] == false }).to be >= 9
+      expect(corpus.count { |entry| entry["sends"] == true }).to be >= 3
+    end
+
+    corpus.each do |entry|
+      if entry["sends"]
+        it "sends the post's own words: #{entry["name"]}" do
+          sent = text.for_submission(entry["raw"])[:text]
+          expect(entry["words"]).not_to be_empty
+          entry["words"].each { |word| expect(sent).to include(word) }
+        end
+      else
+        it "sends nothing, not even the title: #{entry["name"]}" do
+          expect(text.for_submission(entry["raw"])[:text]).to eq("")
+          expect(text.for_submission(entry["raw"], "Tytuł tematu")[:text]).to eq("")
+        end
+      end
+    end
+
+    it "keeps what it sends for a post with text: invisible characters change nothing else" do
+      raw = "Zwykły tekst\u200B ![](upload://abc.png) dalej"
+      expect(text.for_submission(raw)[:text]).to eq("Zwykły tekst  dalej")
+      expect(text.for_submission("![opis](upload://abc.png) i tekst")[:text]).to eq("opis i tekst")
+    end
+
+    it "sends the text when the check itself fails: more, never less" do
+      raw = %(<img src="upload://abc.png" alt="opis">)
+      expect(text.for_submission(raw)[:text]).to eq("")
+      own = MinosModeration::Text::OWN_MARKUP
+      allow(MinosModeration::Text).to receive(:steps).and_wrap_original do |original, list, *rest, **options|
+        raise RegexpError, "too long" if list.equal?(own)
+
+        original.call(list, *rest, **options)
+      end
+      expect(text.for_submission(raw)[:text]).to eq("opis")
+    end
+  end
+
   describe "the text that is sent" do
     it "keeps every word a reader sees and drops only markup" do
       raw = <<~MD
@@ -45,9 +90,9 @@ RSpec.describe "MinosModeration::Text" do
       expect(text.for_submission(raw)[:text]).to eq("zakazane podpowiedź i dalej")
     end
 
-    it "sends the raw text of a post that is markup only, rather than nothing" do
+    it "sends nothing for a post that is markup only: it has no text to assess (F7)" do
       raw = "![](upload://abc.png)"
-      expect(text.for_submission(raw)[:text]).to eq(raw)
+      expect(text.for_submission(raw)[:text]).to eq("")
     end
 
     it "sends nothing for a post without any text" do
@@ -608,8 +653,10 @@ RSpec.describe "MinosModeration::Text" do
       expect(text.apply_masks(raw, sent, masked, title: "Tytuł")).to be_nil
     end
 
-    it "sends the title alone when the post has no text at all" do
-      expect(text.for_submission("", "Sam tytuł")[:text]).to eq("Sam tytuł")
+    it "never sends the title alone: a post with no text of its own sends nothing (F7)" do
+      expect(text.for_submission("", "Sam tytuł")[:text]).to eq("")
+      expect(text.for_submission("![](upload://abc.png)", "Sam tytuł")[:text]).to eq("")
+      expect(text.for_submission("Treść", "Sam tytuł")[:text]).to eq("Sam tytuł\n\nTreść")
     end
   end
 end

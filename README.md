@@ -6,8 +6,9 @@ publikuje post, publikuje go z zamaskowanymi fragmentami, odrzuca go albo zostaw
 moderatorom — zgodnie z ustawieniami administratora forum. Jest częścią projektu Minos;
 licencja GPL-2.0 (plik `LICENSE`).
 
-> Trasa B2B bramy nie jest jeszcze otwarta produkcyjnie. Do tego czasu wtyczkę można
-> uruchomić z bramą testową (atrapą) z repozytorium `minos-moderation/client-php` — patrz
+> **Stan:** trasa B2B bramy jest otwarta produkcyjnie od 25 października 2026 r. Klucz i
+> sekret webhooka wydaje operator bramy. Bez klucza wtyczkę można wypróbować z bramą
+> testową (atrapą) z repozytorium `minos-moderation/client-php` — patrz
 > `docs/development.md`.
 
 ## Jak to działa
@@ -32,17 +33,29 @@ licencja GPL-2.0 (plik `LICENSE`).
    | brak werdyktu w czasie `minos_timeout_minutes` | jak `nieocenione` |
 
 5. Każda decyzja zostawia **notatkę dla moderatorów** w zgłoszeniu w kolejce przeglądu:
-   werdykt, kategorie (np. `wulgaryzmy`, `nekanie`) i to, co wtyczka zrobiła.
+   werdykt, kategorie (np. `wulgaryzmy`, `nekanie`), powód i to, co wtyczka zrobiła. Gdy
+   post z werdyktem `ocenzurowane` zostaje moderatorom (ustawienie, post dłuższy niż 3000
+   znaków, maskowania nie da się nanieść, zapis się nie udał), druga notatka pokazuje
+   tekst wysłany do oceny z fragmentami zamaskowanymi przez bramę (`█`), żeby moderator
+   widział, co brama chciała ukryć — chyba że post zmieniono w kolejce po wysłaniu albo
+   ktoś już się nim zajął: maska dotyczy wtedy starego tekstu, więc jej nie pokazujemy. Notatki zapisuje użytkownik systemowy jako notatki
+   zgłoszenia (`ReviewableNote`), które ma bieżący Discourse; na wersji bez nich wtyczka
+   działa tak samo, ale notatek nie ma — o decyzji świadczy wtedy tylko stan zgłoszenia
+   (opublikowane, odrzucone, czeka). Notatka dłuższa niż 2000 znaków jest skracana, a
+   notatka, której nie udało się zapisać, zostawia tylko wpis w logu.
 
 Kilka zasad, które zawsze obowiązują:
 
 - **Wtyczka nigdy nie zgaduje werdyktu.** Wartość, której nie zna, traktuje jak
   `nieocenione`.
 - **Sygnał wsparcia.** Gdy brama uzna, że treść może świadczyć o kryzysie autora
-  (samookaleczenie), moderatorzy dostają o tym notatkę. Taki post nigdy nie jest
-  odrzucany ani ukrywany automatycznie — także gdy werdykt przyjdzie po publikacji w
-  trybie `fail-open` — a wtyczka nie wysyła w tej sprawie żadnej wiadomości autorowi. O
-  tym decyduje człowiek.
+  (samookaleczenie, sygnał `wsparcie`), moderatorzy dowiadują się o tym w swojej kolejce
+  przeglądu, jaki by nie był werdykt: post wstrzymany czeka w niej z notatką, a post
+  opublikowany (od razu albo wcześniej, w trybie `fail-open`) dostaje od użytkownika
+  systemowego **flagę „powiadom moderatorów”** z wyjaśnieniem — nowe zgłoszenie w tej
+  samej kolejce (Discourse wysyła wtedy wiadomość do grupy moderatorów). Taki post nigdy
+  nie jest odrzucany, usuwany ani ukrywany automatycznie, a wtyczka nie wysyła w tej
+  sprawie żadnej wiadomości autorowi. O tym decyduje człowiek.
 - **Reguły forum mają pierwszeństwo.** Post, który Discourse i tak wstrzymałby sam (np.
   od nowego użytkownika, ze słowem z listy obserwowanych słów, w kategorii wymagającej
   zatwierdzenia), czeka na moderatora jak zawsze; werdykt Minos jest wtedy tylko
@@ -53,12 +66,24 @@ Kilka zasad, które zawsze obowiązują:
 - **Maskowanie tylko pewne.** Jeśli zamaskowanych fragmentów nie da się bezpiecznie
   nanieść na treść w Markdownie albo zapisana w kolejce treść nie jest dokładnie
   zamaskowana, post nie jest publikowany, tylko czeka na moderatora.
+- **Tytuł nigdy nie jest zmieniany.** Jeśli brama zamaskuje fragment tytułu nowego
+  tematu, wtyczka nie publikuje tematu z innym tytułem: post czeka na moderatora, a
+  notatka pokazuje tekst z maskami. Gdy taki werdykt przyjdzie po publikacji w trybie
+  `fail-open`, post zostaje ukryty (z sygnałem wsparcia — zostaje widoczny i dostaje
+  flagę), a tytuł pozostaje bez zmian.
 - Moderator może w każdej chwili sam zatwierdzić albo odrzucić post w kolejce; późniejszy
   werdykt zostanie wtedy pominięty.
 
 Nie są wstrzymywane: posty moderatorów i administratorów (ustawienie `minos_skip_staff`),
-posty botów i systemu oraz **wiadomości prywatne** (Discourse nigdy ich nie kolejkuje, a
-ich treść jest prywatna). Wtyczka nie ocenia **edycji** już opublikowanych postów.
+posty botów i systemu, **wiadomości prywatne** (Discourse nigdy ich nie kolejkuje, a
+ich treść jest prywatna) oraz posty **poza zakresem** wybranym przez administratora
+(ustawienia `minos_categories`, `minos_exempt_groups`, `minos_max_trust_level`). Post
+poza zakresem **nie jest oceniany wcale**: wtyczka niczego o nim nie wysyła ani nie
+zapisuje, a Discourse publikuje go albo wstrzymuje według własnych reguł (np. post
+nowego użytkownika nadal czeka na zatwierdzenie, jeśli tak każe forum). Domyślnie zakres
+obejmuje wszystkie posty. Jeśli zakresu nie da się ustalić (np. kategoria posta nie
+istnieje albo żadna z wybranych kategorii już nie istnieje), post jest moderowany.
+Wtyczka nie ocenia **edycji** już opublikowanych postów.
 
 ## Instalacja
 
@@ -79,6 +104,11 @@ przekierowaniami.
              - git clone https://github.com/discourse/docker_manager.git
              - git clone https://github.com/minos-moderation/plugin-discourse.git minos-moderation
    ```
+
+   To instalacja z gałęzi `main` — **stan przejściowy** do pierwszego wydania wtyczki
+   (tagu `v0.1.0`): przy każdym `./launcher rebuild app` forum pobiera wtedy najnowszy
+   stan `main`. Po wydaniu instrukcja wskaże instalację z tagu
+   (`git clone --branch v0.1.0 …`), a aktualizacja będzie zmianą tagu w tym wierszu.
 
 2. Przebuduj kontener:
 
@@ -105,23 +135,30 @@ przekierowaniami.
 | `minos_enabled` | wyłączone | Włącza moderację nowych postów. |
 | `minos_gateway_url` | `https://gateway.wergiliusz.app` | Adres bramy. Wymagany `https`; zwykłe `http` działa tylko z atrapą bramy na tym samym komputerze (`localhost`). |
 | `minos_api_key` | puste | Klucz forum (nagłówek `X-Gateway-Key`). Pole tajne: nie trafia do logów ani na strony. |
-| `minos_webhook_secret` | puste | Sekret, którym brama podpisuje dostawy. Bez niego żaden werdykt nie zostanie przyjęty. Pole tajne. |
-| `minos_profile` | `forum_adult` | Profil oceny: `forum_adult` (forum dla dorosłych) albo `forum_teen` (forum dla nastolatków). Musi być na liście profili klucza. |
+| `minos_webhook_secret` | puste | Sekret, którym brama podpisuje dostawy. Bez niego żaden werdykt nie zostanie przyjęty, więc wtyczka niczego nie wysyła: nowe posty od razu przechodzą w tryb awarii. Pole tajne. |
+| `minos_profile` | `forum_adult` | Profil oceny: `forum_adult` (forum dla dorosłych) albo `forum_teen` (forum dla dzieci i młodzieży). Musi być na liście profili klucza. |
 | `minos_failure_mode` | `fail-closed` | Co zrobić z postem bez oceny: `fail-open` — opublikować, `fail-closed` — zostawić moderatorom. |
 | `minos_timeout_minutes` | `20` | Po ilu minutach bez werdyktu post jest traktowany jak nieoceniony. Najmniej 20: brama próbuje doręczać werdykt przez 15 minut, a wtyczka zostawia margines. Mniejsza wartość zapisana we wcześniejszej wersji działa jak 20. |
 | `minos_censored_action` | `publikuj_ocenzurowany` | Werdykt `ocenzurowane`: `publikuj_ocenzurowany` albo `zostaw_moderatorom`. |
 | `minos_blocked_action` | `zostaw_moderatorom` | Werdykt `zablokowane`: `zostaw_moderatorom` albo `odrzuc`. |
 | `minos_skip_staff` | włączone | Posty moderatorów i administratorów publikowane od razu, bez oceny. |
+| `minos_categories` | puste (wszystkie) | Kategorie, w których nowe posty są wstrzymywane i oceniane — także w ich podkategoriach. Post z innej kategorii nie jest oceniany wcale. |
+| `minos_exempt_groups` | puste (żadna) | Grupy, których członków wtyczka nie moderuje: ich posty nie są wstrzymywane ani oceniane. |
+| `minos_max_trust_level` | `4` (wszyscy) | Najwyższy poziom zaufania autora, którego posty są wstrzymywane i oceniane; np. `1` — tylko nowi i podstawowi użytkownicy. Posty autorów z wyższym poziomem nie są oceniane wcale. |
 
 ## `fail-open` czy `fail-closed`
 
 Brama może nie ocenić posta: odpowiedź `nieocenione`, brak werdyktu w czasie
-`minos_timeout_minutes`, błąd konfiguracji (np. nieważny klucz) albo post bez żadnego
-tekstu. O tym, co wtedy, decyduje `minos_failure_mode`:
+`minos_timeout_minutes`, błąd konfiguracji (np. nieważny klucz) albo post bez własnego
+tekstu do oceny. O tym, co wtedy, decyduje `minos_failure_mode`:
 
 - **`fail-closed`** (domyślnie) — post czeka w kolejce przeglądu na moderatora, z notatką,
   dlaczego nie został oceniony. Nic nieocenionego nie trafia na forum samo, ale przy
-  dłuższej awarii kolejka rośnie.
+  dłuższej awarii kolejka rośnie. Jeśli post czekał, bo werdykt nie przyszedł w czasie
+  `minos_timeout_minutes`, a werdykt przyjdzie później, gdy nikt jeszcze nie zatwierdził
+  ani nie odrzucił posta, wtyczka stosuje go tak, jakby przyszedł na czas (np.
+  `bezpieczne` publikuje post). Gdy moderator zdążył już zdecydować, werdykt jest
+  pomijany; gdy zmienił treść posta w kolejce, werdykt trafia tylko do notatki.
 - **`fail-open`** — post zostaje opublikowany bez oceny (z notatką w historii zgłoszenia).
   Forum działa płynnie, ale w czasie awarii nic nie jest moderowane. Wyjątek: post, który
   Discourse wstrzymał sam, albo który moderator zmienił w kolejce, zawsze czeka na
@@ -130,23 +167,41 @@ tekstu. O tym, co wtedy, decyduje `minos_failure_mode`:
 Jeśli werdykt dla posta opublikowanego w ten sposób jednak przyjdzie później, wtyczka go
 stosuje: przy `zablokowane` post zostaje **ukryty** (moderator może go przywrócić), przy
 `ocenzurowane` fragmenty zostają zamaskowane w opublikowanym poście (albo post zostaje
-ukryty, jeśli tak każe `minos_censored_action` albo maskowania nie da się nanieść), a przy
+ukryty, jeśli tak każe `minos_censored_action`, maskowania nie da się nanieść albo maska
+pada na tytuł tematu), a przy
 `bezpieczne` nic się nie zmienia. Jeśli w międzyczasie ktoś już zajął się postem (edycja,
 ukrycie, usunięcie, rozpatrzona flaga), jego decyzja zostaje. Post z sygnałem wsparcia
-nigdy nie jest ukrywany: zostaje widoczny, a moderatorzy dostają notatkę.
+nigdy nie jest ukrywany: zostaje widoczny, a moderatorzy dostają notatkę i flagę w
+kolejce przeglądu.
 
 To samo ustawienie decyduje o postach dłuższych niż 3000 znaków: brama ocenia tylko ich
 początek, więc przy `fail-closed` taki post (jeśli nie został zablokowany) czeka na
 moderatora, a przy `fail-open` jest publikowany według werdyktu dla początku. Post, którego
 początek wymagał maskowania (`ocenzurowane`), zawsze czeka na moderatora — w obu trybach.
 
-Chwilowe przeciążenie bramy (odpowiedzi 429 i 503) nie jest awarią: wtyczka ponawia
-wysyłkę po czasie, który poda brama (najwyżej po 15 minutach), a bez niego po 1, 2, 4…
-minutach. Gdy brama odmawia na dłużej, niż post może czekać na werdykt
-(`minos_timeout_minutes`) — np. po wyczerpaniu dobowego limitu klucza — post od razu
-przechodzi w tryb awarii, bez czekania. Przy wyczerpanym limicie dobowym i przy
-przeciążeniu bramy pulpit administratora pokazuje, do której godziny (UTC) brama nie
-przyjmuje postów; komunikat znika o tej godzinie albo po pierwszej przyjętej wysyłce.
+Wtyczka uznaje post za przyjęty do oceny tylko po odpowiedzi bramy **202**. Chwilowe
+przeciążenie bramy nie jest awarią: po odpowiedzi 429 (limit klucza, wspólny limit bramy,
+pełna kolejka), 503 i każdej innej 5xx, po przekroczeniu czasu połączenia (także 408),
+po błędzie sieci i po odpowiedzi 2xx innej niż 202 wtyczka ponawia wysyłkę po czasie,
+który poda brama, a bez niego po 1, 2, 4… minutach (najwyżej po 15). Na ten sam czas
+(najwyżej dobę) wstrzymuje wysyłkę **wszystkich** postów: kolejne posty czekają do końca
+przerwy, nie wysyłając zapytań, więc pełna kolejka albo wyczerpany limit kosztuje jedno
+odrzucone zapytanie, a nie jedno na post. Pierwsza przyjęta wysyłka kończy przerwę, a
+zmiana klucza (`minos_api_key`) albo adresu bramy (`minos_gateway_url`) kończy ją od razu,
+razem z komunikatem o limicie — ale tylko przy włączonej wtyczce: zmiana dokonana, gdy
+wtyczka jest wyłączona, przerwy nie kończy (trwa wtedy do swojego końca, najwyżej dobę).
+Po przerwie wszystkie odłożone posty są wysyłane naraz. Gdy brama odmawia na dłużej, niż
+post może czekać na werdykt (`minos_timeout_minutes`) — np. po wyczerpaniu dobowego
+limitu klucza — post od razu przechodzi w tryb awarii, bez czekania i bez zapytania. Każda inna odmowa bramy (inny kod 4xx, przekierowanie) to błąd
+konfiguracji: post przechodzi w tryb awarii, a pulpit administratora pokazuje kod. Przy
+wyczerpanym limicie dobowym i przy przeciążeniu bramy pulpit administratora pokazuje, do
+której godziny (UTC) brama nie przyjmuje postów; komunikat znika o tej godzinie albo po
+pierwszej przyjętej wysyłce.
+
+Jeśli werdyktu, który przyszedł, nie da się zastosować (np. przez chwilowy błąd bazy),
+wtyczka ponawia próbę co 5 minut, a po **24 godzinach** rezygnuje: post zostaje w stanie,
+w jakim był (wstrzymany czeka na moderatora, opublikowany zostaje opublikowany), z
+notatką „werdyktu nie udało się zastosować przez dobę”.
 
 Wyłączenie wtyczki niczego nie publikuje ani nie usuwa: wstrzymane posty zostają w
 kolejce przeglądu dla moderatorów.
@@ -170,6 +225,25 @@ env:
 Werdykt, który mimo ponowień nie dotrze w czasie `minos_timeout_minutes`, trafia do
 ustawienia `minos_failure_mode`.
 
+Wtyczka odpowiada bramie kodem 2xx tylko wtedy, gdy zapisała werdykt. Gdy forum jest w
+trybie **tylko do odczytu** (np. podczas przywracania kopii zapasowej), Discourse odpowiada
+na dostawę kodem 503, a brama ponawia ją przez około 12 minut od przyjęcia posta: werdykt
+doręczony w tym czasie wraca po ponowieniu. Przerwa dłuższa niż około 12 minut gubi
+werdykt — post czeka wtedy do końca czasu `minos_timeout_minutes` i przechodzi w tryb
+awarii. Wyłączona wtyczka odpowiada na dostawy kodem 404.
+
+## Raport: czas do werdyktu i werdykty
+
+W panelu administratora, w **Raportach**, wtyczka dodaje raport „Minos — czas do werdyktu
+i werdykty” (widoczny dla moderatorów i administratorów, gdy wtyczka jest włączona). Z
+ostatnich 7 dni pokazuje: medianę (P50) i 95. percentyl (P95) czasu od przyjęcia posta
+przez bramę (odpowiedź 202) do doręczenia werdyktu, liczbę postów, dla których ten czas
+zmierzono, liczbę werdyktów `bezpieczne`, `ocenzurowane`, `zablokowane` i `nieocenione`
+oraz liczbę postów, które zakończyły się bez werdyktu (tryb awarii po upływie czasu,
+odmowie bramy albo błędzie konfiguracji). Liczby powstają z czasów i werdyktów, które
+wtyczka i tak przechowuje przez 30 dni — raport nie zapisuje niczego nowego, nie wysyła
+zapytań do bramy i nie zawiera treści postów, klucza ani sekretu.
+
 ## Co wtyczka wysyła, a czego nigdy
 
 Do bramy trafia, dla każdego wstrzymanego posta:
@@ -192,7 +266,16 @@ Do bramy trafia, dla każdego wstrzymanego posta:
   Podpowiedź, którą Discourse pokazuje po najechaniu kursorem (atrybut `title`), oraz
   adres, tytuł i etykieta linku zapisanego w Markdownie idą zaraz po słowie, w którym
   stoją, żeby go nie rozdzielić; innych atrybutów HTML (np. `href` w znaczniku `<a>`) wtyczka nie wysyła.
-  Wysyłane jest **pierwsze 3000 znaków** (limit bramy);
+  Wysyłane jest **pierwsze 3000 znaków** (limit bramy). Post **bez własnego tekstu** —
+  którego widoczna treść to tylko obrazek (także z tekstem alternatywnym albo tytułem),
+  film, załącznik albo link bez widocznego opisu, ewentualnie ze znakami niewidocznymi
+  (np. spacja zerowej szerokości, miękki dywiz) albo samą składnią Markdownu (linia
+  pozioma, pusty nagłówek, pusta pozycja listy, pusta tabela) — nie jest wysyłany wcale,
+  nawet z tytułem tematu: brama nie ocenia obrazów, a sam adres nie jest treścią. Taki
+  post przechodzi w tryb awarii (`minos_failure_mode`), tak samo jak post, którego tekstu
+  nie udało się odczytać z powodu błędu (w logu zostaje wtedy tylko nazwa klasy błędu).
+  Adres wpisany wprost i widoczny dla czytelnika (`https://…`) jest tekstem i jest
+  wysyłany. Tekst alternatywny i tytuł obrazka idą tylko obok innych słów posta;
 - **profil** z ustawienia `minos_profile`;
 - **sygnały antyspamowe**: liczba linków w poście, to, czy to pierwszy post autora, oraz
   do 10 domen, do których prowadzą linki i obrazki (np. `example.com`, bez reszty adresu).
@@ -200,12 +283,31 @@ Do bramy trafia, dla każdego wstrzymanego posta:
 Wtyczka **nigdy** nie wysyła danych autora — adresu e-mail, adresu IP, identyfikatora ani
 nazwy użytkownika — ani wiadomości prywatnych. Klucz trafia wyłącznie do nagłówka żądania do
 bramy; ani klucz, ani sekret nie są zapisywane w logach ani pokazywane na stronach. W
-logach Discourse wtyczka zapisuje tylko numer zgłoszenia, status HTTP i kod błędu bramy.
+logach Discourse wtyczka zapisuje ostrzeżenia z numerem zgłoszenia, statusem HTTP i kodem
+błędu bramy, czasem do ponowienia, nazwą kroku, który się nie udał, i nazwą klasy błędu
+(np. `ActiveRecord::RecordInvalid`) — nigdy treści komunikatu błędu, treści posta, ciała
+żądania ani dostawy, klucza ani sekretu.
+
+### Co wtyczka przechowuje i jak długo
 
 Stan każdego wstrzymanego posta (czasy, próby, werdykt bez zamaskowanego tekstu i skrót
-kryptograficzny treści, nigdy sama treść) wtyczka trzyma w bazie forum i usuwa po 30
-dniach. Oryginalna treść posta opublikowanego z maskowaniem zostaje dla moderatorów tylko
-w historii zgłoszenia albo w historii edycji posta.
+kryptograficzny treści, nigdy sama treść) wtyczka trzyma w bazie forum (`PluginStore`) i
+usuwa po **30 dniach**. Oryginalnej treści posta wtyczka nie przechowuje wcale.
+
+Dłużej niż 30 dni zostają wpisy w **rejestrach samego Discourse**, które powstają, gdy
+wtyczka działa — podlegają one zasadom przechowywania danych forum, a nie wtyczki, i
+polityka prywatności forum powinna o nich mówić:
+
+- **historia zgłoszenia w kolejce przeglądu**: oryginalna treść posta opublikowanego z
+  maskowaniem prosto z kolejki (zmiana treści zgłoszenia) oraz notatki wtyczki — werdykt,
+  kategorie, powód, sygnał wsparcia i, gdy post z werdyktem `ocenzurowane` został
+  moderatorom, tekst z maskami bramy; widoczne dla moderatorów i administratorów;
+- **historia edycji posta**: oryginalna treść posta zamaskowanego już po publikacji (gdy
+  werdykt przyszedł po publikacji w trybie `fail-open`) — w **ukrytej** wersji, którą
+  Discourse pokazuje tylko moderatorom i administratorom, także gdy forum udostępnia
+  historię edycji wszystkim (`edit_history_visible_to_public`);
+- **flaga „powiadom moderatorów”** przy sygnale wsparcia i wiadomość do grupy
+  moderatorów, którą Discourse do niej dołącza (bez treści posta).
 
 ## Dla programistów
 

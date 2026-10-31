@@ -26,12 +26,12 @@ module MinosModeration
     ACTIONS = %i[approve approve_masked reject leave keep mask hide].freeze
 
     # Every reason a decision may give, here or when `VerdictApplier` cannot carry one out
-    # (`mask_unmappable`, `topic_closed`, `action_failed`, `apply_stuck`). Each but
-    # `verdict` has a text under `minos_moderation.reasons` in the locales.
+    # (`mask_unmappable`, `title_masked`, `topic_closed`, `action_failed`, `apply_stuck`).
+    # Each but `verdict` has a text under `minos_moderation.reasons` in the locales.
     REASONS = %i[
-      verdict core_hold edited unassessed timeout limit config no_text truncated
-      censored_setting no_masked_text mask_unmappable blocked_setting support topic_closed
-      action_failed apply_stuck person_acted
+      verdict core_hold edited unassessed timeout limit config no_text extraction_failed
+      truncated censored_setting no_masked_text mask_unmappable title_masked blocked_setting
+      support topic_closed action_failed apply_stuck person_acted
     ].freeze
 
     # Seconds a finished entry is kept, to recognise a late repeated delivery.
@@ -47,11 +47,19 @@ module MinosModeration
     # Seconds after which a submission still marked as being sent is presumed lost.
     STALE_SENDING_S = 120
 
+    # The longest shared pause, in seconds: a day, the longest window the gateway's limits
+    # count in. A `ponow_za_s` beyond it pauses the plugin for a day, so that a malformed
+    # answer can never stop it for longer.
+    MAX_PAUSE_S = 24 * 3600
+
     # The lowest `minos_timeout_minutes` the plugin works with. The gateway tries to deliver
     # a verdict for 15 minutes; a shorter wait would give a post the failure mode while its
     # verdict is still on the way. `config/settings.yml` offers nothing lower, and
     # {timeout_s} raises a value stored before the minimum was raised.
     MIN_TIMEOUT_MINUTES = 20
+
+    # The trust levels Discourse knows (`TrustLevel.valid_range`).
+    TRUST_LEVELS = (0..4).freeze
 
     # The decision about one post.
     #
@@ -107,7 +115,8 @@ module MinosModeration
     # moderators, with a note — approving it would also unsilence an auto-silenced author.
     #
     # @param settings [Hash{String => String}] as in {for_verdict}.
-    # @param reason [Symbol] `:unassessed`, `:timeout`, `:limit`, `:config` or `:no_text`.
+    # @param reason [Symbol] `:unassessed`, `:timeout`, `:limit`, `:config`, `:no_text` or
+    #   `:extraction_failed`.
     # @param support [Boolean] whether a verdict set `wsparcie` anyway.
     # @param core_hold [Boolean] whether Discourse itself held the post for review.
     # @param edited [Boolean] whether the post changed in the queue after it was sent.
@@ -205,6 +214,138 @@ module MinosModeration
       earlier.is_a?(String) && !earlier.empty? && earlier == digests[current.to_s]
     end
 
+    # The administrator's scope as stored, read: which new posts the plugin holds and
+    # sends. An empty list is "every category" or "no group"; a value that cannot be read
+    # is nil, which {in_scope?} ignores, so it never narrows the scope.
+    #
+    # @param categories [String, nil] `minos_categories`: category ids joined by "|".
+    # @param exempt_groups [String, nil] `minos_exempt_groups`: group ids joined by "|".
+    # @param max_trust_level [Integer, String, nil] `minos_max_trust_level`.
+    # @return [Hash{String => Object}] `categories` and `exempt_groups` (Array<Integer> or
+    #   nil), `max_trust_level` (Integer or nil).
+    def self.scope_settings(categories:, exempt_groups:, max_trust_level:)
+      level = Integer(max_trust_level.to_s, 10, exception: false)
+      {
+        "categories" => id_list(categories),
+        "exempt_groups" => id_list(exempt_groups),
+        "max_trust_level" => TRUST_LEVELS.cover?(level) ? level : nil,
+      }
+    end
+
+    # Whether a new post is in the administrator's scope, so that the plugin holds it and
+    # sends it. A post out of scope is not the plugin's at all: Discourse publishes or holds
+    # it by its own rules, nothing is sent and no verdict is ever guessed for it. Whatever
+    # cannot be told fails toward moderation: an unknown category, author's groups or trust
+    # level, or a setting that cannot be read, never takes a post out of scope.
+    #
+    # @param category_ids [Array<Integer>, nil] the post's category and the categories
+    #   above it (a subcategory of a chosen category is in scope); nil when unknown.
+    # @param group_ids [Array<Integer>, nil] the author's groups; nil when unknown.
+    # @param trust_level [Integer, nil] the author's trust level; nil when unknown.
+    # @param scope [Hash{String => Object}] {scope_settings}, its `categories` narrowed to
+    #   the categories that still exist.
+    # @return [Boolean] false only when a readable setting puts the post out: the author's
+    #   trust level is above `max_trust_level`, the author is in an exempt group, or the
+    #   post's category (and every one above it) is outside a non-empty `categories`.
+    def self.in_scope?(category_ids:, group_ids:, trust_level:, scope:)
+      scope = {} unless scope.is_a?(Hash)
+      highest = scope["max_trust_level"]
+      if highest.is_a?(Integer) && trust_level.is_a?(Integer) && trust_level > highest
+        return false
+      end
+
+      exempt = scope["exempt_groups"]
+      return false if exempt.is_a?(Array) && group_ids.is_a?(Array) && (exempt & group_ids).any?
+
+      chosen = scope["categories"]
+      return true unless chosen.is_a?(Array) && !chosen.empty?
+      return true unless category_ids.is_a?(Array) && !category_ids.empty?
+
+      (chosen & category_ids).any?
+    end
+
+    # Whether the moderators' note shows the gateway's masked text (shared plugin rule A2d):
+    # for an `ocenzurowane` verdict with a masked text whose masks did not reach the post
+    # (anything but `approve_masked` or `mask`), unless the post changed since it was sent
+    # (`edited`) or a person acted on it (`person_acted`): the masks are then of an older
+    # text, which may hold what a moderator removed since.
+    #
+    # @param verdict [Hash{String => Object}, nil] the verdict, with its `ocenzurowany`.
+    # @param action [Symbol] what was done ({ACTIONS}).
+    # @param reason [Symbol] why ({REASONS}).
+    # @return [Boolean]
+    def self.mask_note?(verdict, action:, reason:)
+      return false unless verdict.is_a?(Hash) && verdict["status"] == "ocenione"
+      return false unless verdict["kwalifikacja"] == "ocenzurowane"
+
+      masked = verdict["ocenzurowany"]
+      return false unless masked.is_a?(String) && !masked.empty?
+      return false if %i[approve_masked mask].include?(action)
+
+      !%i[edited person_acted].include?(reason)
+    end
+
+    # Whether a pending entry is due to be sent: waiting and its retry time has come, or
+    # marked as being sent for longer than {STALE_SENDING_S} (that send was lost).
+    #
+    # @param entry [Hash{String => Object}] the entry as `Store` keeps it.
+    # @param now [Integer] the clock, in seconds.
+    # @return [Boolean]
+    def self.due?(entry, now:)
+      case entry["status"]
+      when "queued"
+        entry["retry_at"].to_i <= now
+      when "sending"
+        now - entry["sending_at"].to_i > STALE_SENDING_S
+      else
+        false
+      end
+    end
+
+    # Until when no post is sent after a refusal (shared plugin rule F5a): a `429` (the
+    # key's limits, the shared ceiling, a full queue), a `5xx`, a network failure or a
+    # `2xx` that accepted nothing closes the gateway for every post, not only for the one
+    # refused, so the next posts wait without a request that could only be refused too.
+    #
+    # @param now [Integer] the clock, in seconds.
+    # @param retry_in [Integer, nil] the refusal's `ponow_za_s`, as the gateway gave it.
+    # @param delay [Integer] the plugin's own pause for the refused post, used without a
+    #   `ponow_za_s` (`Scores.backoff`).
+    # @return [Integer] epoch seconds: now plus `ponow_za_s` (or `delay`), at least one
+    #   second and at most {MAX_PAUSE_S} away.
+    def self.pause_until(now:, retry_in:, delay:)
+      wait = retry_in.is_a?(Integer) && retry_in.positive? ? retry_in : delay.to_i
+      now + wait.clamp(1, MAX_PAUSE_S)
+    end
+
+    # @param pause [Hash{String => Object}, nil] the shared pause as `Store` keeps it
+    #   (`until`, epoch seconds).
+    # @param now [Integer] the clock, in seconds.
+    # @return [Integer, nil] when sending may resume, while the pause is in force; nil
+    #   when there is none, it is over or it cannot be read (an unreadable pause never
+    #   stops the plugin).
+    def self.paused_until(pause, now:)
+      return nil unless pause.is_a?(Hash)
+
+      resume = pause["until"]
+      resume.is_a?(Integer) && resume > now && resume <= now + MAX_PAUSE_S ? resume : nil
+    end
+
+    # Whether an entry is a post the failure mode held after its time-out, so that a
+    # verdict delivered late still applies to it (shared plugin rule A6): finished as
+    # `leave` with the reason `timeout`. A post the failure mode published is
+    # `auto_published` instead; one Discourse held itself, one a moderator edited, a
+    # refusal, a configuration error or `nieocenione` finished with another reason, and no
+    # verdict is taken for those. Whether the review item is still undecided is the
+    # caller's to check.
+    #
+    # @param entry [Hash{String => Object}, nil] the entry as `Store` keeps it.
+    # @return [Boolean]
+    def self.held_after_timeout?(entry)
+      entry.is_a?(Hash) && entry["status"] == "done" && entry["outcome"] == "leave" &&
+        entry["reason"] == "timeout"
+    end
+
     # Whether a refusal keeps the gateway closed past the post's time-out, so that the
     # failure mode applies at once instead of a retry that could only come too late
     # (shared plugin rule 3(a)). The gateway's `ponow_za_s` is compared as it was given,
@@ -255,6 +396,15 @@ module MinosModeration
       end
     end
 
+    # @param value [String, nil] ids joined by "|", as Discourse stores a list setting.
+    # @return [Array<Integer>, nil] the ids (empty for an empty value), or nil when a part
+    #   is not a whole number of zero or more (the group "everyone" is 0).
+    def self.id_list(value)
+      parts = value.to_s.split("|").map(&:strip).reject(&:empty?)
+      ids = parts.map { |part| Integer(part, 10, exception: false) }
+      ids.all? { |id| id.is_a?(Integer) && id >= 0 } ? ids.uniq : nil
+    end
+
     # @param settings [Hash{String => String}] as in {for_verdict}.
     # @return [Boolean] whether the administrator chose fail-open; anything else is closed.
     def self.fail_open?(settings)
@@ -286,6 +436,6 @@ module MinosModeration
       Result.new(action: action, reason: reason, unassessed: unassessed, support: support)
     end
 
-    private_class_method :censored, :late, :leave, :result
+    private_class_method :censored, :late, :leave, :result, :id_list
   end
 end

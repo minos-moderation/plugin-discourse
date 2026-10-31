@@ -86,7 +86,9 @@ RSpec.describe Jobs::MinosSubmit do
       { status: 503, body: { "blad" => { "kod" => "kolejka_niedostepna" } }.to_json }
     end
     run_job
-    MinosModeration::Store.set(reviewable.id, entry.merge("retry_at" => now))
+    # After the pause the refusal set for every post (shared plugin rule F5a).
+    freeze_time(2.minutes.from_now)
+    MinosModeration::Store.set(reviewable.id, entry.merge("retry_at" => Time.now.to_i))
     run_job
     expect(ids).to eq(["discourse:#{reviewable.id}.1", "discourse:#{reviewable.id}.2"])
     expect(entry["attempt"]).to eq(2)
@@ -173,15 +175,178 @@ RSpec.describe Jobs::MinosSubmit do
       expect(MinosModeration::Store.problem).to be_nil
     end
 
-    it "forgets the limit once the gateway accepts a post again" do
+    it "sends nothing more until the limit ends, then forgets it once the gateway accepts" do
       run_job
+      # WebMock counts every request that matches a stub's pattern, whichever stub answered
+      # it: from here on only what is sent after the limit counts.
+      WebMock::RequestRegistry.instance.reset!
+      freeze_time(36_001.seconds.from_now)
+      later = Time.now.to_i
       MinosModeration::Store.set(
         reviewable.id,
-        { "status" => "queued", "queued_at" => now, "retry_at" => now, "attempts" => 0 },
+        { "status" => "queued", "queued_at" => later, "retry_at" => later, "attempts" => 0 },
       )
-      answer(202)
+      accepting = answer(202)
       run_job
+      expect(accepting).to have_been_requested.once
       expect(MinosModeration::Store.limit).to be_nil
+      expect(MinosModeration::Store.pause).to be_nil
+    end
+  end
+
+  it "retries a success other than 202 after a backoff, never as a configuration error" do
+    answer(200)
+    freeze_time
+    run_job
+    expect(entry).to include("status" => "queued", "retry_at" => Time.now.to_i + 60)
+    expect(reviewable.reload).to be_pending
+    expect(MinosModeration::Store.problem).to be_nil
+  end
+
+  describe "the pause every post shares after a refusal (shared plugin rule F5a)" do
+    fab!(:second) { Fabricate(:reviewable_queued_post) }
+    fab!(:third) { Fabricate(:reviewable_queued_post) }
+
+    before do
+      [second, third].each do |queued|
+        MinosModeration::Store.set(
+          queued.id,
+          {
+            "status" => "queued",
+            "queued_at" => now,
+            "retry_at" => now,
+            "attempts" => 0,
+            "core_hold" => nil,
+          },
+        )
+      end
+      freeze_time
+    end
+
+    def run_for(queued)
+      described_class.new.execute(reviewable_id: queued.id)
+    end
+
+    def entry_of(queued)
+      MinosModeration::Store.get(queued.id)
+    end
+
+    it "makes one request for three posts after a full queue, and defers the others to its end" do
+      stub = answer(429, { "kod" => "kolejka_pelna", "komunikat" => "x", "ponow_za_s" => 30 })
+      run_job
+      expect_enqueued_with(
+        job: :minos_submit,
+        args: { reviewable_id: second.id },
+        at: 30.seconds.from_now,
+      ) { run_for(second) }
+      run_for(third)
+
+      expect(stub).to have_been_requested.once
+      [second, third].each do |queued|
+        expect(entry_of(queued)).to include(
+          "status" => "queued",
+          "retry_at" => Time.now.to_i + 30,
+          "attempts" => 0,
+        )
+      end
+    end
+
+    it "gives the next posts the failure mode at once after a daily limit, without a request" do
+      stub =
+        answer(429, { "kod" => "limit_dobowy_klucza", "komunikat" => "x", "ponow_za_s" => 36_000 })
+      [reviewable, second, third].each { |queued| run_for(queued) }
+
+      expect(stub).to have_been_requested.once
+      [reviewable, second, third].each do |queued|
+        expect(entry_of(queued)).to include("status" => "done", "reason" => "limit")
+        expect(queued.reload).to be_pending
+      end
+    end
+
+    it "pauses after an unavailable queue" do
+      stub = answer(503, { "kod" => "kolejka_niedostepna", "komunikat" => "x" })
+      [reviewable, second, third].each { |queued| run_for(queued) }
+      expect(stub).to have_been_requested.once
+      expect(entry_of(third)).to include("status" => "queued", "retry_at" => Time.now.to_i + 60)
+    end
+
+    it "pauses after a network failure" do
+      stub = stub_request(:post, endpoint).to_timeout
+      [reviewable, second, third].each { |queued| run_for(queued) }
+      expect(stub).to have_been_requested.once
+      expect(entry_of(second)).to include("status" => "queued", "attempts" => 0)
+    end
+
+    it "never shortens a pause in force: a 503 on its way does not lift a daily limit" do
+      first_id = "discourse:#{reviewable.id}.1"
+      stub_request(:post, endpoint).to_return do |request|
+        if JSON.parse(request.body)["elementy"][0]["id"] == first_id
+          refusal = { "kod" => "limit_dobowy_klucza", "ponow_za_s" => 36_000 }
+          { status: 429, body: { "blad" => refusal }.to_json }
+        else
+          # While this request is on its way, the gateway refuses the other post for a day.
+          run_job
+          { status: 503, body: { "blad" => { "kod" => "kolejka_niedostepna" } }.to_json }
+        end
+      end
+
+      run_for(second)
+
+      expect(entry).to include("status" => "done", "reason" => "limit")
+      expect(entry_of(second)).to include("status" => "queued")
+      expect(MinosModeration::Store.pause).to include(
+        "until" => Time.now.to_i + 36_000,
+        "gateway" => true,
+      )
+      # So the next post still gets the failure mode at once, without a request.
+      WebMock::RequestRegistry.instance.reset!
+      run_for(third)
+      expect(entry_of(third)).to include("status" => "done", "reason" => "limit")
+      expect(a_request(:post, endpoint)).not_to have_been_made
+    end
+
+    it "lifts the pause and the limit when the administrator changes the key" do
+      stub =
+        answer(429, { "kod" => "limit_dobowy_klucza", "komunikat" => "x", "ponow_za_s" => 36_000 })
+      run_job
+      expect(stub).to have_been_requested.once
+      expect(MinosModeration::Store.pause).to be_present
+      expect(MinosModeration::Store.limit).to be_present
+      # WebMock counts every request that matches a stub's pattern, whichever stub answered
+      # it: from here on only what the new key sends counts.
+      WebMock::RequestRegistry.instance.reset!
+
+      new_key = "wgb2b_inny_klucz_testowy_000000000000"
+      SiteSetting.minos_api_key = new_key
+      expect(MinosModeration::Store.pause).to be_nil
+      expect(MinosModeration::Store.limit).to be_nil
+      answer(202)
+      run_for(second)
+      expect(entry_of(second)["status"]).to eq("submitted")
+      expect(a_request(:post, endpoint)).to have_been_made.once
+      expect(a_request(:post, endpoint).with(headers: { "X-Gateway-Key" => new_key })).to(
+        have_been_made.once,
+      )
+    end
+
+    it "sends again once the pause is over, and the next 202 lifts it" do
+      stub =
+        stub_request(:post, endpoint).to_return(
+          {
+            status: 429,
+            body: { "blad" => { "kod" => "kolejka_pelna", "ponow_za_s" => 30 } }.to_json,
+          },
+          { status: 202, body: "{}" },
+        )
+      run_job
+      run_for(second)
+      expect(stub).to have_been_requested.once
+
+      freeze_time(31.seconds.from_now)
+      run_for(second)
+      expect(stub).to have_been_requested.twice
+      expect(entry_of(second)["status"]).to eq("submitted")
+      expect(MinosModeration::Store.pause).to be_nil
     end
   end
 
@@ -242,6 +407,34 @@ RSpec.describe Jobs::MinosSubmit do
     run_job
     expect(stub).not_to have_been_requested
     expect(entry).to include("status" => "done", "reason" => "config")
+  end
+
+  it "applies the failure mode at once when the text cannot be read, and logs no message" do
+    allow(MinosModeration::Text).to receive(:for_submission).and_raise(
+      ArgumentError,
+      "komunikat z fragmentem posta",
+    )
+    stub = answer(202)
+    logger = track_log_messages { run_job }
+    expect(stub).not_to have_been_requested
+    expect(reviewable.reload).to be_pending
+    expect(entry).to include(
+      "status" => "done",
+      "outcome" => "leave",
+      "reason" => "extraction_failed",
+    )
+    logged = logger.warnings.join("\n")
+    expect(logged).to include("ArgumentError")
+    expect(logged).not_to include("komunikat z fragmentem posta")
+  end
+
+  it "applies the failure mode at once when the webhook secret is missing, without sending" do
+    SiteSetting.minos_webhook_secret = ""
+    stub = answer(202)
+    run_job
+    expect(stub).not_to have_been_requested
+    expect(reviewable.reload).to be_pending
+    expect(entry).to include("status" => "done", "outcome" => "leave", "reason" => "config")
   end
 
   it "forgets the last configuration problem once the gateway accepts" do
