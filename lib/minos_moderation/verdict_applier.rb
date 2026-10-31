@@ -6,7 +6,7 @@ module MinosModeration
   # Carries out a `Decision` on a held post, through the reviewable, and records it.
   #
   # Publishing is `perform(system user, :approve_post)`, rejecting `:reject_post`; a masked
-  # publication first edits the queued `raw` (and `title`) with `update_fields`, which
+  # publication first edits the queued `raw` (never the title) with `update_fields`, which
   # Discourse records in the reviewable's history, and approves only once the reviewable,
   # read back from the database, carries exactly the masks. Every outcome leaves a note
   # for the moderators on the review item (a `ReviewableNote` by the system user). When an
@@ -207,7 +207,9 @@ module MinosModeration
       end
     end
 
-    # Publishes the masked text (and title, for a new topic).
+    # Publishes the masked text. A plugin never changes a title (shared plugin rule S5): a
+    # mask on a new topic's title holds the post for a moderator, with the masked text in
+    # a note, and the title is published only as its author wrote it.
     #
     # @return [Array(Decision::Result, Hash)] what was done, and fields for the entry.
     def approve_masked(reviewable, decision, verdict)
@@ -217,11 +219,11 @@ module MinosModeration
       title = reviewable.payload["title"]
       masked = masks_for(raw, title, verdict)
       return [instead(decision, :mask_unmappable), {}] unless masked
+      return [instead(decision, :title_masked), {}] if title_masked?(title, masked)
 
       # String keys: the payload is a JSON column, and a symbol key would add a second
       # "raw" to it.
       changes = { "raw" => masked[:raw] }
-      changes["title"] = masked[:title] if title
       edited =
         begin
           reviewable.update_fields({ payload: changes }, ::Discourse.system_user)
@@ -231,7 +233,14 @@ module MinosModeration
         end
       return [instead(decision, :action_failed), {}] unless edited && stored?(reviewable, changes)
 
-      [act(reviewable, :approve_post, decision), originals(raw, title)]
+      [act(reviewable, :approve_post, decision), originals(raw)]
+    end
+
+    # @param title [String, nil] a new topic's title, as it is now.
+    # @param masked [Hash{Symbol => String}] {masks_for}'s result.
+    # @return [Boolean] whether the gateway's masks fall on the title.
+    def title_masked?(title, masked)
+      !title.nil? && masked[:title] != title
     end
 
     # Whether the queued text Discourse would publish is the masked one. `approve_post`
@@ -240,7 +249,7 @@ module MinosModeration
     # must never publish the original instead.
     #
     # @param reviewable [ReviewableQueuedPost] the pending post, reloaded here.
-    # @param changes [Hash{String => String}] the masked `raw` (and `title`).
+    # @param changes [Hash{String => String}] the masked `raw`.
     # @return [Boolean] whether every masked field is stored exactly.
     def stored?(reviewable, changes)
       reviewable.reload
@@ -351,7 +360,8 @@ module MinosModeration
       instead(decision, :action_failed, action: :keep)
     end
 
-    # Edits the masks into a published post; hides it when that cannot be done exactly.
+    # Edits the masks into a published post; hides it when that cannot be done exactly or
+    # when a mask falls on the topic's title, which a plugin never changes (S5).
     #
     # The edit is a hidden revision (`hidden: true`): the revision keeps the unmasked text,
     # and Discourse shows a hidden revision to staff only, also where the forum makes edit
@@ -366,12 +376,13 @@ module MinosModeration
       title = payload["title"]
       masked = reviewable && masks_for(raw, title, verdict)
       return [unmasked(post, decision, :mask_unmappable), {}] unless masked
+      # A plugin never changes a title (shared plugin rule S5).
+      return [unmasked(post, decision, :title_masked), {}] if title_masked?(title, masked)
 
       fields = {
         raw: published_form(masked[:raw]),
         edit_reason: translate("minos_moderation.edit_reason"),
       }
-      fields[:title] = masked[:title] if title && post.is_first_post?
       revised =
         begin
           ::PostRevisor.new(post).revise!(
@@ -389,7 +400,7 @@ module MinosModeration
       return [unmasked(post, decision, :action_failed), {}] unless revised
 
       hide_original(post)
-      [decision, originals(raw, title)]
+      [decision, originals(raw)]
     end
 
     # Makes sure the revision that holds a masked post's original is hidden from everyone
@@ -425,11 +436,9 @@ module MinosModeration
       Text.apply_masks(raw, sent, verdict && verdict["ocenzurowany"], title: title)
     end
 
-    # @return [Hash{String => String}] digests of the unmasked text, never the text.
-    def originals(raw, title)
-      digests = { "original_digest" => ::Digest::SHA256.hexdigest(raw) }
-      digests["original_title_digest"] = ::Digest::SHA256.hexdigest(title) if title
-      digests
+    # @return [Hash{String => String}] the digest of the unmasked text, never the text.
+    def originals(raw)
+      { "original_digest" => ::Digest::SHA256.hexdigest(raw) }
     end
 
     # @return [Hash] a verdict as the entry keeps it: without the masked text.

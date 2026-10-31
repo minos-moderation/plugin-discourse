@@ -117,37 +117,97 @@ RSpec.describe Jobs::MinosApplyVerdict do
       expect(notes.join).to include("wulgaryzmy")
     end
 
-    it "masks a new topic's title as well as its first post" do
-      queued = Fabricate(:reviewable_queued_post_topic)
-      topic_raw = queued.payload["raw"]
-      title = queued.payload["title"]
-      topic_sent = MinosModeration::Text.for_submission(topic_raw, title)
-      MinosModeration::Store.set(
-        queued.id,
-        {
-          "status" => "received",
-          "received_at" => Time.now.to_i,
-          "text_digest" => topic_sent[:digest],
-          "truncated" => false,
-          "core_hold" => nil,
-          "verdict" =>
-            assessed(
-              "ocenzurowane",
-              "id" => "discourse:#{queued.id}",
-              "ocenzurowany" => topic_sent[:text].sub("title", mask * 5).sub("world", mask * 5),
-            ),
-        },
-      )
-      described_class.new.execute(reviewable_id: queued.id)
+    describe "on a new topic (shared plugin rule S5: a title is never changed)" do
+      fab!(:queued) { Fabricate(:reviewable_queued_post_topic) }
 
-      published = Post.find(queued.reload.target_id)
-      expect(published.raw).to eq(topic_raw.sub("world", mask * 5))
-      # Discourse may prettify a title (capitals), so the check is on the words.
-      expect(published.topic.title).to include(mask * 5)
-      expect(published.topic.title).not_to include("title")
-      stored = MinosModeration::Store.get(queued.id)
-      expect(stored).not_to have_key("original_title")
-      expect(stored["original_title_digest"]).to eq(Digest::SHA256.hexdigest(title))
+      let(:topic_raw) { queued.payload["raw"] }
+      let(:title) { queued.payload["title"] }
+      let(:topic_sent) { MinosModeration::Text.for_submission(topic_raw, title) }
+
+      def apply_to_topic(masked, entry = {})
+        MinosModeration::Store.set(
+          queued.id,
+          {
+            "status" => "received",
+            "received_at" => Time.now.to_i,
+            "text_digest" => topic_sent[:digest],
+            "truncated" => false,
+            "core_hold" => nil,
+            "verdict" =>
+              assessed("ocenzurowane", "id" => "discourse:#{queued.id}", "ocenzurowany" => masked),
+          }.merge(entry),
+        )
+        described_class.new.execute(reviewable_id: queued.id)
+        queued.reload
+      end
+
+      def topic_entry
+        MinosModeration::Store.get(queued.id)
+      end
+
+      it "holds a topic whose title the gateway masked, title untouched, mask in a note" do
+        masked = topic_sent[:text].sub("title", mask * 5).sub("world", mask * 5)
+        apply_to_topic(masked)
+
+        expect(queued).to be_pending
+        expect(queued.payload["title"]).to eq(title)
+        expect(queued.payload["raw"]).to eq(topic_raw)
+        expect(topic_entry).to include("outcome" => "leave", "reason" => "title_masked")
+        expect(queued.reviewable_notes.map(&:content)).to include(include(masked))
+      end
+
+      it "publishes a topic whose masks are all in its post, under its own title" do
+        apply_to_topic(topic_sent[:text].sub("world", mask * 5))
+
+        published = Post.find(queued.target_id)
+        expect(published.raw).to eq(topic_raw.sub("world", mask * 5))
+        # Discourse may prettify a title (capitals), so the check is on the words.
+        expect(published.topic.title.downcase).to include("title")
+        expect(published.topic.title).not_to include(mask)
+        expect(topic_entry).not_to have_key("original_title_digest")
+      end
+
+      describe "after the failure mode published it" do
+        let(:first_post) { Post.find(queued.target_id) }
+
+        before do
+          queued.perform(Discourse.system_user, :approve_post)
+          queued.reload
+        end
+
+        def late_on_topic(extra = {})
+          masked = topic_sent[:text].sub("title", mask * 5).sub("world", mask * 5)
+          verdict = assessed("ocenzurowane", "id" => "discourse:#{queued.id}.1", "ocenzurowany" => masked)
+          apply_to_topic(
+            masked,
+            {
+              "auto_published" => true,
+              "post_id" => queued.target_id,
+              "attempt" => 1,
+              "verdict" => verdict.merge(extra),
+            },
+          )
+          first_post.reload
+        end
+
+        it "takes the post out of view and never changes the title" do
+          before_title = first_post.topic.title
+          late_on_topic
+          expect(first_post).to be_hidden
+          expect(first_post.raw).to eq(topic_raw)
+          expect(first_post.topic.reload.title).to eq(before_title)
+          expect(topic_entry).to include("outcome" => "hide", "reason" => "title_masked")
+        end
+
+        it "keeps a post with wsparcie visible and flags it, the title untouched" do
+          before_title = first_post.topic.title
+          late_on_topic("wsparcie" => true)
+          expect(first_post).not_to be_hidden
+          expect(first_post.topic.reload.title).to eq(before_title)
+          expect(topic_entry).to include("outcome" => "keep", "reason" => "title_masked")
+          expect(support_flags(first_post).count).to eq(1)
+        end
+      end
     end
 
     it "leaves the post when the administrator chose so" do

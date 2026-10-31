@@ -65,6 +65,11 @@ Kilka zasad, które zawsze obowiązują:
 - **Maskowanie tylko pewne.** Jeśli zamaskowanych fragmentów nie da się bezpiecznie
   nanieść na treść w Markdownie albo zapisana w kolejce treść nie jest dokładnie
   zamaskowana, post nie jest publikowany, tylko czeka na moderatora.
+- **Tytuł nigdy nie jest zmieniany.** Jeśli brama zamaskuje fragment tytułu nowego
+  tematu, wtyczka nie publikuje tematu z innym tytułem: post czeka na moderatora, a
+  notatka pokazuje tekst z maskami. Gdy taki werdykt przyjdzie po publikacji w trybie
+  `fail-open`, post zostaje ukryty (z sygnałem wsparcia — zostaje widoczny i dostaje
+  flagę), a tytuł pozostaje bez zmian.
 - Moderator może w każdej chwili sam zatwierdzić albo odrzucić post w kolejce; późniejszy
   werdykt zostanie wtedy pominięty.
 
@@ -161,7 +166,8 @@ tekstu do oceny. O tym, co wtedy, decyduje `minos_failure_mode`:
 Jeśli werdykt dla posta opublikowanego w ten sposób jednak przyjdzie później, wtyczka go
 stosuje: przy `zablokowane` post zostaje **ukryty** (moderator może go przywrócić), przy
 `ocenzurowane` fragmenty zostają zamaskowane w opublikowanym poście (albo post zostaje
-ukryty, jeśli tak każe `minos_censored_action` albo maskowania nie da się nanieść), a przy
+ukryty, jeśli tak każe `minos_censored_action`, maskowania nie da się nanieść albo maska
+pada na tytuł tematu), a przy
 `bezpieczne` nic się nie zmienia. Jeśli w międzyczasie ktoś już zajął się postem (edycja,
 ukrycie, usunięcie, rozpatrzona flaga), jego decyzja zostaje. Post z sygnałem wsparcia
 nigdy nie jest ukrywany: zostaje widoczny, a moderatorzy dostają notatkę i flagę w

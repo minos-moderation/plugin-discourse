@@ -74,6 +74,7 @@ en:
       censored_setting: "ustawienie minos_censored_action każe zostawiać takie posty moderatorom"
       no_masked_text: "brama nie przysłała zamaskowanej wersji posta"
       mask_unmappable: "maskowania nie dało się bezpiecznie nanieść na treść posta"
+      title_masked: "brama zamaskowała fragment tytułu tematu, a wtyczka nigdy nie zmienia tytułu — o poście decyduje moderator"
       blocked_setting: "ustawienie minos_blocked_action każe zostawiać takie posty moderatorom"
       support: "treść może świadczyć o kryzysie autora, więc o odrzuceniu albo ukryciu posta decyduje człowiek"
       topic_closed: "temat zamknięto, zanim przyszedł werdykt"

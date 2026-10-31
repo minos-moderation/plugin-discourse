@@ -26,12 +26,12 @@ module MinosModeration
     ACTIONS = %i[approve approve_masked reject leave keep mask hide].freeze
 
     # Every reason a decision may give, here or when `VerdictApplier` cannot carry one out
-    # (`mask_unmappable`, `topic_closed`, `action_failed`, `apply_stuck`). Each but
-    # `verdict` has a text under `minos_moderation.reasons` in the locales.
+    # (`mask_unmappable`, `title_masked`, `topic_closed`, `action_failed`, `apply_stuck`).
+    # Each but `verdict` has a text under `minos_moderation.reasons` in the locales.
     REASONS = %i[
       verdict core_hold edited unassessed timeout limit config no_text truncated
-      censored_setting no_masked_text mask_unmappable blocked_setting support topic_closed
-      action_failed apply_stuck person_acted
+      censored_setting no_masked_text mask_unmappable title_masked blocked_setting support
+      topic_closed action_failed apply_stuck person_acted
     ].freeze
 
     # Seconds a finished entry is kept, to recognise a late repeated delivery.

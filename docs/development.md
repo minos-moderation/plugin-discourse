@@ -106,11 +106,14 @@ and the verdict without its masked text, for 30 days. A table without dates
    `minos_timeout_minutes` and the failure mode.
 4. `VerdictApplier#apply_verdict` asks `Decision.for_verdict` what to do and does it
    through the reviewable: `perform(system user, :approve_post)`, `update_fields` of the
-   queued `raw` (and `title`), a `reload` that must read the masks back exactly, followed
-   by `:approve_post`, `:reject_post`, or nothing. A `ReviewableNote` records the
-   outcome; when an `ocenzurowane` verdict's masks did not reach the post (left by
-   `minos_censored_action`, a cut text, masks that do not map, a failed edit, or a
-   published post hidden instead), a second note shows the gateway's masked text (shared
+   queued `raw`, a `reload` that must read the masks back exactly, followed by
+   `:approve_post`, `:reject_post`, or nothing. A plugin never changes a title (shared
+   plugin rule S5): a mask on a new topic's title leaves the post to the moderators
+   (`title_masked`), and on a late verdict it is handled like a mask that cannot be
+   carried out (the post hidden, or kept and flagged with `wsparcie`). A `ReviewableNote`
+   records the outcome; when an `ocenzurowane` verdict's masks did not reach the post
+   (left by `minos_censored_action`, a cut text, masks that do not map or fall on the
+   title, a failed edit, or a published post hidden instead), a second note shows the gateway's masked text (shared
    plugin rule A2d): `@` made inert with U+2060, control characters removed, cut to
    `ReviewableNote::MAX_CONTENT_LENGTH` with an ellipsis; Discourse escapes a note's HTML
    when it renders it (`PlaintextMentions#render`). The entry ends `done`.
@@ -274,7 +277,7 @@ and S8b.
 | `S4a` | above 3000 characters: the beginning is assessed, the decision is `nieocenione` | `Text::MAX_CHARS`, `Decision.for_verdict` (`truncated`); `spec/lib/decision_spec.rb` "a post only partly sent" |
 | `S4b` | the note about a cut post | `minos_moderation.reasons.truncated` in the note; odstępstwo: another wording ("oceniono tylko pierwsze 3000 znaków posta"; no issue) |
 | `S4c` | `ocenzurowane` on a cut post is never applied automatically | `Decision.censored`, `Decision.late` (`truncated`); `spec/lib/decision_spec.rb` "leaves a censored head to the moderators under both modes" |
-| `S5` | a topic's title (a visible reply subject, a poll) is part of `tekst`; a title is never changed | `Text.submission` (title, blank line; a reply has no subject; a `[poll]` is in `raw`); `spec/lib/text_spec.rb` "a new topic's title". Odstępstwo: a mask on the title is carried onto the topic's title (`VerdictApplier#approve_masked`, `#mask`) instead of holding the post (no issue) |
+| `S5` | a topic's title (a visible reply subject, a poll) is part of `tekst`; a title is never changed | `Text.submission` (title, blank line; a reply has no subject; a `[poll]` is in `raw`); `spec/lib/text_spec.rb` "a new topic's title"; a mask on the title holds the post (`VerdictApplier#title_masked?` in `#approve_masked` and `#mask`, reason `title_masked`); `spec/jobs/minos_apply_verdict_spec.rb` "on a new topic (shared plugin rule S5: a title is never changed)" |
 | `S6` | an edit of a published post is reassessed (after the capacity decision) | odstępstwo: not implemented, as the rule allows until the gateway's capacity decision (K-38, K-44) |
 | `S7` | a post the platform holds is sent and annotated (after the capacity decision) | `NewPostHandler.call` (`core_hold`), `Decision.for_verdict` (`core_hold`: a note, never published); `spec/integration/new_post_handler_spec.rb` "lets Discourse hold a post it holds itself", `spec/jobs/minos_apply_verdict_spec.rb` "only notes the verdict on a post Discourse holds itself" |
 | `A1` | the digest of the sent text is checked before applying | `Submission#run` (`text_digest`, `digests`), `VerdictApplier#changed_since_sent?`, `#acted_on?` (`TextCleaner` normalisation); `spec/jobs/minos_apply_verdict_spec.rb` "leaves a post edited in the queue after it was sent", "still hides a post Discourse normalised on publication" |
