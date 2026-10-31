@@ -277,6 +277,34 @@ RSpec.describe Jobs::MinosSubmit do
       expect(entry_of(second)).to include("status" => "queued", "attempts" => 0)
     end
 
+    it "never shortens a pause in force: a 503 on its way does not lift a daily limit" do
+      first_id = "discourse:#{reviewable.id}.1"
+      stub_request(:post, endpoint).to_return do |request|
+        if JSON.parse(request.body)["elementy"][0]["id"] == first_id
+          refusal = { "kod" => "limit_dobowy_klucza", "ponow_za_s" => 36_000 }
+          { status: 429, body: { "blad" => refusal }.to_json }
+        else
+          # While this request is on its way, the gateway refuses the other post for a day.
+          run_job
+          { status: 503, body: { "blad" => { "kod" => "kolejka_niedostepna" } }.to_json }
+        end
+      end
+
+      run_for(second)
+
+      expect(entry).to include("status" => "done", "reason" => "limit")
+      expect(entry_of(second)).to include("status" => "queued")
+      expect(MinosModeration::Store.pause).to include(
+        "until" => Time.now.to_i + 36_000,
+        "gateway" => true,
+      )
+      # So the next post still gets the failure mode at once, without a request.
+      WebMock::RequestRegistry.instance.reset!
+      run_for(third)
+      expect(entry_of(third)).to include("status" => "done", "reason" => "limit")
+      expect(a_request(:post, endpoint)).not_to have_been_made
+    end
+
     it "lifts the pause and the limit when the administrator changes the key" do
       stub =
         answer(429, { "kod" => "limit_dobowy_klucza", "komunikat" => "x", "ponow_za_s" => 36_000 })
