@@ -493,8 +493,9 @@ module MinosModeration
 
     # The masked text for the moderators (shared plugin rule A2d): when an `ocenzurowane`
     # verdict's masks were not carried onto the post (left to the moderators by the
-    # setting, a cut text, masks that do not map, an action that failed; a published post
-    # hidden instead), the note shows what the gateway would have masked. It is the sent
+    # setting, a cut text, masks that do not map or fall on the title, an action that
+    # failed; a published post hidden instead), the note shows what the gateway would have
+    # masked; never for a post edited since it was sent or one a person acted on. It is the sent
     # text with `█` in place of the masked fragments: nothing that did not leave the forum
     # already. Discourse escapes a note's HTML when it shows it; an `@name` in it is made
     # inert with a word joiner (U+2060) before the `@`, so the note mentions nobody;
@@ -505,6 +506,9 @@ module MinosModeration
       return nil unless verdict.is_a?(Hash) && verdict["status"] == "ocenione"
       return nil unless verdict["kwalifikacja"] == "ocenzurowane"
       return nil if %i[approve_masked mask].include?(done.action)
+      # The post changed since it was sent, or a person acted on it: the masks are of an
+      # older text, which may hold what a moderator removed since.
+      return nil if %i[edited person_acted].include?(done.reason)
 
       masked = verdict["ocenzurowany"]
       return nil unless masked.is_a?(String) && !masked.empty?

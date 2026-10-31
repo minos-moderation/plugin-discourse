@@ -286,6 +286,14 @@ RSpec.describe Jobs::MinosApplyVerdict do
       expect(mask_notes).to contain_exactly(include(masked))
     end
 
+    it "notes no mask for a post edited in the queue since it was sent" do
+      apply_verdict(censored, { "text_digest" => "0" * 64 })
+      expect(reviewable).to be_pending
+      expect(entry["reason"]).to eq("edited")
+      expect(mask_notes).to be_empty
+      expect(notes.join).to include("ocenzurowane")
+    end
+
     it "notes no mask when the masks reached the post" do
       apply_verdict(censored)
       expect(reviewable).to be_approved

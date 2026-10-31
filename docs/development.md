@@ -113,7 +113,8 @@ and the verdict without its masked text, for 30 days. A table without dates
    carried out (the post hidden, or kept and flagged with `wsparcie`). A `ReviewableNote`
    records the outcome; when an `ocenzurowane` verdict's masks did not reach the post
    (left by `minos_censored_action`, a cut text, masks that do not map or fall on the
-   title, a failed edit, or a published post hidden instead), a second note shows the gateway's masked text (shared
+   title, a failed edit, or a published post hidden instead; never when the post was
+   edited since it was sent or a person acted on it: the masks are of an older text), a second note shows the gateway's masked text (shared
    plugin rule A2d): `@` made inert with U+2060, control characters removed, cut to
    `ReviewableNote::MAX_CONTENT_LENGTH` with an ellipsis; Discourse escapes a note's HTML
    when it renders it (`PlaintextMentions#render`). The entry ends `done`.

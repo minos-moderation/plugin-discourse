@@ -37,7 +37,8 @@ licencja GPL-2.0 (plik `LICENSE`).
    post z werdyktem `ocenzurowane` zostaje moderatorom (ustawienie, post dłuższy niż 3000
    znaków, maskowania nie da się nanieść, zapis się nie udał), druga notatka pokazuje
    tekst wysłany do oceny z fragmentami zamaskowanymi przez bramę (`█`), żeby moderator
-   widział, co brama chciała ukryć. Notatki zapisuje użytkownik systemowy jako notatki
+   widział, co brama chciała ukryć — chyba że post zmieniono w kolejce po wysłaniu albo
+   ktoś już się nim zajął: maska dotyczy wtedy starego tekstu, więc jej nie pokazujemy. Notatki zapisuje użytkownik systemowy jako notatki
    zgłoszenia (`ReviewableNote`), które ma bieżący Discourse; na wersji bez nich wtyczka
    działa tak samo, ale notatek nie ma — o decyzji świadczy wtedy tylko stan zgłoszenia
    (opublikowane, odrzucone, czeka). Notatka dłuższa niż 2000 znaków jest skracana, a
