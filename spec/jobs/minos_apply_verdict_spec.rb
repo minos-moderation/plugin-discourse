@@ -171,6 +171,11 @@ RSpec.describe Jobs::MinosApplyVerdict do
         let(:first_post) { Post.find(queued.target_id) }
 
         before do
+          # Discourse itself normalises a title whenever it saves a topic with validations
+          # (`TextCleaner.clean_title`, a capital first letter under `title_prettify`), and
+          # hiding or flagging a post saves its topic, while approving from the queue saved
+          # it without them. Without that normalisation any change is the plugin's.
+          SiteSetting.title_prettify = false
           queued.perform(Discourse.system_user, :approve_post)
           queued.reload
         end
