@@ -214,8 +214,10 @@ reader can see is dropped; where removing something is not certain, more is sent
   videos and audio, alt texts and titles included), attachments
   (`[name|attachment](upload://…) (12.3 KB)`), links with no text (`[](…)`), a link's
   address, title and label, tooltips, and the lines that are only Markdown's syntax
-  (`Text::EMPTY_BLOCKS`: a thematic break, an empty heading or list item, a table's
-  delimiter row or a row of empty cells, outside code and HTML blocks). When nothing of that is left but `Text::NOT_TEXT`
+  (`Text::EMPTY_BLOCKS`: a thematic break, an empty heading or list item outside code and
+  HTML blocks, and a line of pipes, colons and dashes only on the lines of a table
+  markdown-it reads, `Reading#tables`; outside a table `|`, `| - |` or `|---|` is a
+  paragraph's text and is sent). When nothing of that is left but `Text::NOT_TEXT`
   (format and control characters such as U+200B, U+00AD, U+2060, U+FEFF; separators and
   white space; lone combining marks such as U+034F or U+FE0F; the Hangul and Braille
   fillers; anything invisible by default), the sent text is empty, title included, and

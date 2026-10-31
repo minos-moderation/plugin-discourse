@@ -487,13 +487,16 @@ module MinosModeration
 
     # Lines that are Markdown's syntax and nothing else, which {own_text?} reads as no
     # text (outside code and HTML blocks, where they are shown as written): a thematic
-    # break, a heading or a list item with nothing in it, a table's delimiter row and a
-    # row of empty cells. Read last, after the other steps took the text out of them.
+    # break, a heading or a list item with nothing in it, and, only on the lines of a
+    # table markdown-it reads ({line_kinds}: a header over a delimiter row with as many
+    # cells, and its rows), a line of pipes, colons and dashes alone. Elsewhere such a line
+    # is a paragraph's text, `| - |` or `|---|` too, and is sent. Read last, after the other
+    # steps took the text out of them; each with the guard it is read under.
     EMPTY_BLOCKS = [
-      /^[ \t]{0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/, # a thematic break
-      /^[ \t]{0,3}\#{1,6}[ \t]*$/, # an empty ATX heading
-      /^[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]*$/, # an empty list item
-      /^(?=[^|\n]*\|)[ \t|:-]*$/, # a delimiter row, or a table row of empty cells
+      [/^[ \t]{0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/, :markdown], # a break
+      [/^[ \t]{0,3}\#{1,6}[ \t]*$/, :markdown], # an empty ATX heading
+      [/^[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]*$/, :markdown], # an empty list item
+      [/^[ \t|:-]*\|[ \t|:-]*$/, :table], # a table's delimiter row, or a row of empty cells
     ].freeze
 
     # What does not make a post a text to assess (shared plugin rule F7): format and
@@ -590,7 +593,7 @@ module MinosModeration
             [step]
           end
         end
-        .concat(EMPTY_BLOCKS.map { |pattern| [pattern, [], :markdown] })
+        .concat(EMPTY_BLOCKS.map { |pattern, guard| [pattern, [], guard] })
         .freeze
 
     # Markdown reduced to the text a reader sees, where that is cheap.
@@ -746,6 +749,12 @@ module MinosModeration
         blocks = block_tags(text, origins, lines, kinds, seen)
       end
       reading = inline_reading(text, origins, lines, kinds, seen, source)
+      reading.tables = {}
+      lines.each_with_index do |(from, to), index|
+        next unless %i[table delimiter row].include?(kinds[index])
+
+        (from...to).each { |at| reading.tables[origins[at]] = true if origins[at] }
+      end
       [chars, origins, blocks, reading]
     end
 
@@ -806,6 +815,10 @@ module MinosModeration
         end
       when :paired
         ->(match, at) { (match.begin(0)...match.end(0)).all? { |index| reading.paired[at[index]] } }
+      when :table
+        # A line of a table markdown-it reads ({line_kinds}), and nothing outside it.
+        tables = reading.tables || {}
+        ->(match, at) { (match.begin(0)...match.end(0)).all? { |index| tables[at[index]] } }
       when :paired_ends
         # A BBCode tag pair whose two tags Discourse pairs: the text between them is theirs.
         ->(match, at) { reading.paired[at[match.begin(0)]] && reading.paired[at[match.end(0) - 1]] }
@@ -1461,9 +1474,11 @@ module MinosModeration
     # `paired` BBCode markers that Discourse renders (and so removes), `urls`: the
     # characters of bare links, which markdown-it's linkify shows as they are written, and
     # `html`: the lines of HTML blocks, where Markdown's inline syntax is shown as written;
-    # the `source` characters the origins point at; and the `refs`: the link labels the post
-    # defines ({reference_key}).
-    Reading = Struct.new(:code, :dropped, :segments, :paired, :urls, :html, :source, :refs)
+    # the `source` characters the origins point at; the `refs`: the link labels the post
+    # defines ({reference_key}); and the `tables`: the lines of a table markdown-it reads
+    # (set by {analyse}, for {own_text?}).
+    Reading =
+      Struct.new(:code, :dropped, :segments, :paired, :urls, :html, :source, :refs, :tables)
 
     # Reads what markdown-it's inline rules make of the text: code (fenced and indented
     # blocks, a `[code]` block, code spans by markdown-it's backtick rule with escapes and

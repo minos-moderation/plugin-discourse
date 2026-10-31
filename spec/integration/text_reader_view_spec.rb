@@ -84,8 +84,10 @@ RSpec.describe "The text sent for a post, against Discourse's own rendering" do
       end
     end
 
+  # Punctuation alone has no word to compare (`words` reads letters and digits): those
+  # controls are the standalone tier's.
   no_text
-    .select { |entry| entry["sends"] == true }
+    .select { |entry| entry["sends"] == true && entry["kind"] != "punctuation" }
     .each do |entry|
       it "sends every word a reader sees of a post with text: #{entry["name"]}" do
         cooked = PrettyText.cook(entry["raw"])

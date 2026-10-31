@@ -29,6 +29,8 @@
   {"name": "an empty list item", "raw": "- ", "sends": false, "kind": "markup"},
   {"name": "an empty numbered list item", "raw": "1.", "sends": false, "kind": "markup"},
   {"name": "a table of empty cells", "raw": "| |\n|-|\n| |", "sends": false, "kind": "markup"},
+  {"name": "an empty table header without rows", "raw": "| |\n|-|", "sends": false, "kind": "markup"},
+  {"name": "a two-column table of empty cells", "raw": "|  |  |\n|--|--|\n|  |  |", "sends": false, "kind": "markup"},
   {"name": "an image under a thematic break", "raw": "---\n\n![](upload://abc.png)", "sends": false, "kind": "markup"},
   {"name": "real text, a zero-width space and an image", "raw": "Zwykły tekst\u200b ![](upload://abc.png) dalej", "sends": true, "kind": "text", "words": ["Zwykły", "tekst", "dalej"]},
   {"name": "a bare address alone", "raw": "https://e.example/strona", "sends": true, "kind": "link", "words": ["https://e.example/strona"]},
@@ -38,6 +40,10 @@
   {"name": "an image's alt text next to the post's words", "raw": "![opis](upload://abc.png) i tekst", "sends": true, "kind": "text", "words": ["opis", "i", "tekst"]},
   {"name": "a list item with text", "raw": "- pierwszy punkt", "sends": true, "kind": "text", "words": ["pierwszy", "punkt"]},
   {"name": "a heading over a thematic break", "raw": "# Nagłówek\n\n---", "sends": true, "kind": "text", "words": ["Nagłówek"]},
+  {"name": "a pipe alone, a paragraph", "raw": "|", "sends": true, "kind": "punctuation", "words": ["|"]},
+  {"name": "pipes around a dash, a paragraph", "raw": "| - |", "sends": true, "kind": "punctuation", "words": ["| - |"]},
+  {"name": "a delimiter row without a header, a paragraph", "raw": "|---|---|", "sends": true, "kind": "punctuation", "words": ["|---|---|"]},
+  {"name": "a header over a delimiter row of another width, a paragraph", "raw": "| |\n|-|-|", "sends": true, "kind": "punctuation", "words": ["|-|-|"]},
   {"name": "a table with text in a cell", "raw": "| a |\n|-|\n| słowo |", "sends": true, "kind": "text", "words": ["słowo"]},
   {"name": "a letter with a combining accent", "raw": "e\u0301", "sends": true, "kind": "text", "words": ["e\u0301"]}
 ]
