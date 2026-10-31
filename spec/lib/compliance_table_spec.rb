@@ -55,4 +55,14 @@ RSpec.describe "The compliance table of the shared plugin rules" do
       expect(cells.last.strip.delete_suffix("|").strip).not_to be_empty, row
     end
   end
+
+  it "names the issue that closes every deviation" do
+    rules_file
+    deviations = table.each_line.grep(/^\| `#{identifier.source}` \|.*odstępstwo/i)
+    # A table without deviations would check nothing here; this one has several.
+    expect(deviations).not_to be_empty
+    deviations.each do |row|
+      expect(row).to match(/odstępstwo.*#\d+/im), row
+    end
+  end
 end
