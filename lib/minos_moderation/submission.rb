@@ -62,7 +62,12 @@ module MinosModeration
 
       endpoint = Scores.endpoint(Settings.gateway_url)
       key = Settings.api_key
-      return VerdictApplier.new(@id).apply_failure(:config) if endpoint.nil? || key.empty?
+      # Without a usable address, key or webhook secret nothing is sent (shared plugin rule
+      # F8): without the secret no verdict could be taken, so the text would leave the
+      # forum for nothing and the post would reach the failure mode only at its time-out.
+      if endpoint.nil? || key.empty? || Settings.webhook_secret.empty?
+        return VerdictApplier.new(@id).apply_failure(:config)
+      end
 
       raw = reviewable.payload["raw"].to_s
       text = Text.for_submission(raw, reviewable.payload["title"])

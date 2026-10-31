@@ -134,7 +134,7 @@ przekierowaniami.
 | `minos_enabled` | wyłączone | Włącza moderację nowych postów. |
 | `minos_gateway_url` | `https://gateway.wergiliusz.app` | Adres bramy. Wymagany `https`; zwykłe `http` działa tylko z atrapą bramy na tym samym komputerze (`localhost`). |
 | `minos_api_key` | puste | Klucz forum (nagłówek `X-Gateway-Key`). Pole tajne: nie trafia do logów ani na strony. |
-| `minos_webhook_secret` | puste | Sekret, którym brama podpisuje dostawy. Bez niego żaden werdykt nie zostanie przyjęty. Pole tajne. |
+| `minos_webhook_secret` | puste | Sekret, którym brama podpisuje dostawy. Bez niego żaden werdykt nie zostanie przyjęty, więc wtyczka niczego nie wysyła: nowe posty od razu przechodzą w tryb awarii. Pole tajne. |
 | `minos_profile` | `forum_adult` | Profil oceny: `forum_adult` (forum dla dorosłych) albo `forum_teen` (forum dla dzieci i młodzieży). Musi być na liście profili klucza. |
 | `minos_failure_mode` | `fail-closed` | Co zrobić z postem bez oceny: `fail-open` — opublikować, `fail-closed` — zostawić moderatorom. |
 | `minos_timeout_minutes` | `20` | Po ilu minutach bez werdyktu post jest traktowany jak nieoceniony. Najmniej 20: brama próbuje doręczać werdykt przez 15 minut, a wtyczka zostawia margines. Mniejsza wartość zapisana we wcześniejszej wersji działa jak 20. |

@@ -381,6 +381,15 @@ RSpec.describe Jobs::MinosSubmit do
     expect(entry).to include("status" => "done", "reason" => "config")
   end
 
+  it "applies the failure mode at once when the webhook secret is missing, without sending" do
+    SiteSetting.minos_webhook_secret = ""
+    stub = answer(202)
+    run_job
+    expect(stub).not_to have_been_requested
+    expect(reviewable.reload).to be_pending
+    expect(entry).to include("status" => "done", "outcome" => "leave", "reason" => "config")
+  end
+
   it "forgets the last configuration problem once the gateway accepts" do
     MinosModeration::Store.record_problem(reason: "refused", http: 403, code: "brak_webhooka")
     answer(202)
