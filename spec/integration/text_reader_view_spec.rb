@@ -70,9 +70,12 @@ RSpec.describe "The text sent for a post, against Discourse's own rendering" do
 
   # Videos and attachments are drawn by Discourse with its own words (a player, a file
   # name and size), and `words` counts a lone combining mark as a letter, so only images,
-  # links and invisible characters are checked here; the standalone tier checks them all.
+  # links, invisible characters and empty Markdown blocks are checked here; the standalone
+  # tier checks them all.
   no_text
-    .select { |entry| entry["sends"] == false && %w[image link invisible].include?(entry["kind"]) }
+    .select do |entry|
+      entry["sends"] == false && %w[image link invisible markup].include?(entry["kind"])
+    end
     .each do |entry|
       it "shows a reader no words of the post's own, and sends nothing: #{entry["name"]}" do
         cooked = PrettyText.cook(entry["raw"])

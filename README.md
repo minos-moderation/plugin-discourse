@@ -268,12 +268,13 @@ Do bramy trafia, dla każdego wstrzymanego posta:
   Wysyłane jest **pierwsze 3000 znaków** (limit bramy). Post **bez własnego tekstu** —
   którego widoczna treść to tylko obrazek (także z tekstem alternatywnym albo tytułem),
   film, załącznik albo link bez widocznego opisu, ewentualnie ze znakami niewidocznymi
-  (np. spacja zerowej szerokości, miękki dywiz) — nie jest wysyłany wcale, nawet z
-  tytułem tematu: brama nie ocenia obrazów, a sam adres nie jest treścią. Taki post
-  przechodzi w tryb awarii (`minos_failure_mode`), tak samo jak post, którego tekstu nie
-  udało się odczytać z powodu błędu (w logu zostaje wtedy tylko nazwa klasy błędu). Adres wpisany wprost i widoczny dla
-  czytelnika (`https://…`) jest tekstem i jest wysyłany. Tekst alternatywny i tytuł
-  obrazka idą tylko obok innych słów posta;
+  (np. spacja zerowej szerokości, miękki dywiz) albo samą składnią Markdownu (linia
+  pozioma, pusty nagłówek, pusta pozycja listy, pusta tabela) — nie jest wysyłany wcale,
+  nawet z tytułem tematu: brama nie ocenia obrazów, a sam adres nie jest treścią. Taki
+  post przechodzi w tryb awarii (`minos_failure_mode`), tak samo jak post, którego tekstu
+  nie udało się odczytać z powodu błędu (w logu zostaje wtedy tylko nazwa klasy błędu).
+  Adres wpisany wprost i widoczny dla czytelnika (`https://…`) jest tekstem i jest
+  wysyłany. Tekst alternatywny i tytuł obrazka idą tylko obok innych słów posta;
 - **profil** z ustawienia `minos_profile`;
 - **sygnały antyspamowe**: liczba linków w poście, to, czy to pierwszy post autora, oraz
   do 10 domen, do których prowadzą linki i obrazki (np. `example.com`, bez reszty adresu).

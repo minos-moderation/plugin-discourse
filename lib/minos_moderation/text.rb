@@ -485,6 +485,17 @@ module MinosModeration
     # is not text a reader sees ({own_text?}; the full reduction sends it, as written).
     BBCODE_IMAGE = %r{\[img(?:=[^\]\n]*)?\][^\n]*?\[/img\]}i
 
+    # Lines that are Markdown's syntax and nothing else, which {own_text?} reads as no
+    # text (outside code and HTML blocks, where they are shown as written): a thematic
+    # break, a heading or a list item with nothing in it, a table's delimiter row and a
+    # row of empty cells. Read last, after the other steps took the text out of them.
+    EMPTY_BLOCKS = [
+      /^[ \t]{0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/, # a thematic break
+      /^[ \t]{0,3}\#{1,6}[ \t]*$/, # an empty ATX heading
+      /^[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]*$/, # an empty list item
+      /^(?=[^|\n]*\|)[ \t|:-]*$/, # a delimiter row, or a table row of empty cells
+    ].freeze
+
     # What does not make a post a text to assess (shared plugin rule F7): format and
     # control characters (a zero-width space, a soft hyphen, a word joiner, a byte order
     # mark), separators and white space, combining marks without a letter, and the fillers
@@ -579,6 +590,7 @@ module MinosModeration
             [step]
           end
         end
+        .concat(EMPTY_BLOCKS.map { |pattern| [pattern, [], :markdown] })
         .freeze
 
     # Markdown reduced to the text a reader sees, where that is cheap.
