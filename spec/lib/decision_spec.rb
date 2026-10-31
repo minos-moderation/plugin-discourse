@@ -445,6 +445,50 @@ RSpec.describe "MinosModeration::Decision" do
     end
   end
 
+  describe "the masked text in the moderators' note (shared plugin rule A2d)" do
+    let(:censored) { verdict("ocenzurowane", "ocenzurowany" => "to jest █████") }
+
+    def note?(value, action, reason)
+      decision.mask_note?(value, action: action, reason: reason)
+    end
+
+    it "shows the mask of a post the masks did not reach" do
+      %i[censored_setting truncated mask_unmappable title_masked action_failed core_hold]
+        .each { |reason| expect(note?(censored, :leave, reason)).to be(true), reason.to_s }
+      expect(note?(censored, :hide, :censored_setting)).to be(true)
+      expect(note?(censored, :keep, :support)).to be(true)
+    end
+
+    it "never shows the mask of a post edited since it was sent or one a person acted on" do
+      expect(note?(censored, :leave, :edited)).to be(false)
+      expect(note?(censored, :keep, :person_acted)).to be(false)
+    end
+
+    it "shows nothing when the masks reached the post, or there is no mask" do
+      expect(note?(censored, :approve_masked, :verdict)).to be(false)
+      expect(note?(censored, :mask, :verdict)).to be(false)
+      [nil, "", 7].each do |masked|
+        value = verdict("ocenzurowane", "ocenzurowany" => masked)
+        expect(note?(value, :leave, :censored_setting)).to be(false), masked.inspect
+      end
+      expect(note?(verdict("zablokowane", "ocenzurowany" => "█"), :leave, :verdict)).to be(false)
+      expect(note?(unassessed, :leave, :unassessed)).to be(false)
+      expect(note?(nil, :leave, :timeout)).to be(false)
+    end
+
+    it "shows it exactly when its rule says so, over every action and reason" do
+      shown = []
+      decision::ACTIONS.product(decision::REASONS).each do |action, reason|
+        expected =
+          !%i[approve_masked mask].include?(action) && !%i[edited person_acted].include?(reason)
+        result = note?(censored, action, reason)
+        expect(result).to eq(expected), [action, reason].inspect
+        shown << result
+      end
+      expect(shown.uniq).to contain_exactly(true, false)
+    end
+  end
+
   describe "which attempt's verdict an entry takes" do
     let(:same) { "a" * 64 }
     let(:other) { "b" * 64 }

@@ -292,7 +292,7 @@ and S8b.
 | `A2a` | a mask has the sent length and differs only in `█` | `Text.apply_masks`; `spec/lib/text_spec.rb` (masks), `spec/lib/mock_gateway_spec.rb` |
 | `A2b` | what was sent is what is stored | `Text.apply_masks` (the post must still reduce to the sent text); `spec/lib/text_spec.rb` |
 | `A2c` | the write is checked and read back | `VerdictApplier#stored?` (`reload`); `spec/jobs/minos_apply_verdict_spec.rb` "never approves when the masked text did not persist" |
-| `A2d` | the mask is shown to the moderator | `VerdictApplier#mask_note`; `spec/jobs/minos_apply_verdict_spec.rb` "the gateway's masks shown to the moderators" |
+| `A2d` | the mask is shown to the moderator | `Decision.mask_note?`, `VerdictApplier#mask_note`; `spec/lib/decision_spec.rb` "the masked text in the moderators' note", `spec/jobs/minos_apply_verdict_spec.rb` "the gateway's masks shown to the moderators" |
 | `A2e` | never the original instead of a failed mask | `VerdictApplier#approve_masked` (`mask_unmappable`, `action_failed` leave the post); `spec/jobs/minos_apply_verdict_spec.rb` "leaves the post when the masks cannot be carried onto it" |
 | `A3` | fail-open is marked; a late verdict applies | `auto_published`, `VerdictApplier#apply_late`, `Decision.for_late_verdict`; `spec/jobs/minos_apply_verdict_spec.rb` "a late verdict for a post the failure mode published" |
 | `A4` | notifications once, sent by the plugin where approval sends none | `perform(:approve_post)` sends Discourse's own notifications; a late verdict publishes nothing again. Not verified: the "edited" notification a late mask sends the author through `PostRevisor` |

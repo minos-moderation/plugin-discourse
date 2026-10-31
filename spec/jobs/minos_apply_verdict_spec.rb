@@ -525,6 +525,15 @@ RSpec.describe Jobs::MinosApplyVerdict do
       expect(entry).to include("outcome" => "keep", "reason" => "person_acted")
     end
 
+    it "notes no mask after a person acted on the post: the masks are of an older text" do
+      edited = "#{raw} Poprawione przez moderatora."
+      PostRevisor.new(post).revise!(Fabricate(:moderator), { raw: edited }, force_new_version: true)
+      late(assessed("ocenzurowane", "ocenzurowany" => sent[:text].sub("world", mask * 5)))
+      expect(entry).to include("outcome" => "keep", "reason" => "person_acted")
+      expect(notes.join).to include("ocenzurowane")
+      expect(notes.select { |content| content.include?(mask * 5) }).to be_empty
+    end
+
     it "keeps the author's edit within the grace period, which makes no new version" do
       edited = "#{raw} Poprawione przez autora."
       PostRevisor.new(post).revise!(post.user, { raw: edited })

@@ -503,17 +503,9 @@ module MinosModeration
     #
     # @return [String, nil] the note, or nil when there is no mask to show.
     def mask_note(done, verdict)
-      return nil unless verdict.is_a?(Hash) && verdict["status"] == "ocenione"
-      return nil unless verdict["kwalifikacja"] == "ocenzurowane"
-      return nil if %i[approve_masked mask].include?(done.action)
-      # The post changed since it was sent, or a person acted on it: the masks are of an
-      # older text, which may hold what a moderator removed since.
-      return nil if %i[edited person_acted].include?(done.reason)
+      return nil unless Decision.mask_note?(verdict, action: done.action, reason: done.reason)
 
-      masked = verdict["ocenzurowany"]
-      return nil unless masked.is_a?(String) && !masked.empty?
-
-      shown = masked.gsub(NOTE_CONTROLS, "").gsub("@", "\u2060@")
+      shown = verdict["ocenzurowany"].gsub(NOTE_CONTROLS, "").gsub("@", "\u2060@")
       limit = defined?(::ReviewableNote) ? ::ReviewableNote::MAX_CONTENT_LENGTH : 2000
       room = limit - translate("minos_moderation.notes.masked", tekst: "").length
       shown = "#{shown[0, [room - 1, 0].max]}…" if shown.length > room

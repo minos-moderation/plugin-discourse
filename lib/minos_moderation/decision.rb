@@ -264,6 +264,27 @@ module MinosModeration
       (chosen & category_ids).any?
     end
 
+    # Whether the moderators' note shows the gateway's masked text (shared plugin rule A2d):
+    # for an `ocenzurowane` verdict with a masked text whose masks did not reach the post
+    # (anything but `approve_masked` or `mask`), unless the post changed since it was sent
+    # (`edited`) or a person acted on it (`person_acted`): the masks are then of an older
+    # text, which may hold what a moderator removed since.
+    #
+    # @param verdict [Hash{String => Object}, nil] the verdict, with its `ocenzurowany`.
+    # @param action [Symbol] what was done ({ACTIONS}).
+    # @param reason [Symbol] why ({REASONS}).
+    # @return [Boolean]
+    def self.mask_note?(verdict, action:, reason:)
+      return false unless verdict.is_a?(Hash) && verdict["status"] == "ocenione"
+      return false unless verdict["kwalifikacja"] == "ocenzurowane"
+
+      masked = verdict["ocenzurowany"]
+      return false unless masked.is_a?(String) && !masked.empty?
+      return false if %i[approve_masked mask].include?(action)
+
+      !%i[edited person_acted].include?(reason)
+    end
+
     # Whether a pending entry is due to be sent: waiting and its retry time has come, or
     # marked as being sent for longer than {STALE_SENDING_S} (that send was lost).
     #
