@@ -1,0 +1,17 @@
+# The paths a pull request may change without a `Review:` line for its head (the rule is in this
+# repository's CLAUDE.md): what
+# programista-prosty may change (.claude/agents/programista-prosty.md, "You may change"),
+# narrowed where its list is a judgement. Every other path is on the risk list, so a new
+# folder starts there. Not here: config/locales/ (the agent may change a value, never a
+# key, and a path cannot tell them apart), the test data under spec/ (the specs prove the
+# plugin with it, and the gateway's vector lies among it), and mechanical refactors (a
+# refactor is told by its diff, not by its path). CI reads this list from the pull
+# request's base.
+#
+# One pattern a line: `dir/` matches everything below dir, `**/name` a file of that name in
+# any folder, anything else one exact path. A `!` line is a risk path inside an exempt one
+# and wins over it. spec/repo/review_trail_spec.rb pins the risk markers of
+# spec/repo/claude_rules_spec.rb against this list.
+README.md
+docs/
+!**/CLAUDE.md

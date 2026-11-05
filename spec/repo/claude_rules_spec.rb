@@ -1,9 +1,12 @@
 # frozen_string_literal: true
 
+require "json"
+require "open3"
+
 # The rules for Claude Code sessions stay findable and cheap: the root `CLAUDE.md`, read by
 # every session, keeps to a size budget and names every scoped file, and every project
 # agent pins its model. A Sonnet agent that edits files works from a list of allowed paths,
-# so its file must name the paths it may not touch.
+# so its file must name the paths it may not touch. A registered hook refuses `git add -A`.
 #
 # A port of `tests/Repo/ClaudeRulesTest.php` in `minos-moderation/client-php`. Plain Ruby
 # and RSpec: it runs in the standalone tier and inside Discourse's harness alike, so it
@@ -126,5 +129,33 @@ RSpec.describe "The rules for Claude Code sessions" do
       end
     end
     expect(checked).to be > 0, "no Sonnet agent that writes was found: the check checks nothing"
+  end
+
+  # Runs a hook command as Claude Code does: through the shell, in the project, with the
+  # Bash call's JSON on stdin. Returns the exit code.
+  def run_hook(command, bash_command)
+    input = JSON.generate("session_id" => "test", "hook_event_name" => "PreToolUse", "tool_name" => "Bash",
+                          "tool_input" => { "command" => bash_command, "description" => "test" })
+    _out, _err, status = Open3.capture3({ "CLAUDE_PROJECT_DIR" => root, "PATH" => ENV.fetch("PATH", "") },
+                                        "bash", "-c", command, stdin_data: input, chdir: root, unsetenv_others: true)
+    status.exitstatus
+  end
+
+  # `git add -A` is refused by a hook, not only by the rule's text: `.claude/settings.json`
+  # registers a PreToolUse hook on Bash whose command, run as Claude Code runs it (the
+  # call's JSON on stdin), refuses it with exit 2 and lets an explicit path through. The
+  # hook parses with python3; without it this is skipped, and CI's standalone tier fails on
+  # a skip.
+  it "registers a hook that refuses git add -A" do
+    skip "python3 is needed: the hook parses with it" unless system("command -v python3 > /dev/null 2>&1")
+    settings = JSON.parse(read(".claude/settings.json"))
+    commands =
+      settings.dig("hooks", "PreToolUse").to_a
+              .select { |entry| /\A(?:#{entry["matcher"]})\z/.match?("Bash") }
+              .flat_map { |entry| entry["hooks"].to_a.select { |hook| hook["type"] == "command" } }
+              .map { |hook| hook["command"].to_s }
+    expect(commands).not_to be_empty, "no PreToolUse command hook on Bash is registered"
+    refusing = commands.select { |command| run_hook(command, "git add -A") == 2 && run_hook(command, "git add README.md").zero? }
+    expect(refusing.size).to eq(1), "no registered hook refuses `git add -A` and lets `git add README.md` run"
   end
 end
