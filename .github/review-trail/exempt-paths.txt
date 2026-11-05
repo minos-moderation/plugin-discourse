@@ -1,5 +1,5 @@
-# The paths a pull request may change without a `Review:` line for its head (CLAUDE.md;
-# the rule is "Reviews" in minos-moderation/minos, docs/claude/sessions.md): what
+# The paths a pull request may change without a `Review:` line for its head (the rule is in this
+# repository's CLAUDE.md): what
 # programista-prosty may change (.claude/agents/programista-prosty.md, "You may change"),
 # narrowed where its list is a judgement. Every other path is on the risk list, so a new
 # folder starts there. Not here: config/locales/ (the agent may change a value, never a

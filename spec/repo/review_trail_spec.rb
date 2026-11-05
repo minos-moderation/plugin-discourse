@@ -11,8 +11,8 @@ require "yaml"
 # The review trail CI checks (`.github/review-trail/check.py`, run by
 # `.github/workflows/review-trail.yml`): a pull request that changes a path on the risk list
 # passes only with `Review: <agent> @ <head SHA> — AKCEPTACJA` for its current head, in its
-# description or a member's comment (the rule is "Reviews" in minos-moderation/minos,
-# docs/claude/sessions.md). The script runs as the workflow runs it, on synthetic events,
+# description or a member's comment (the rule is in this repository's
+# CLAUDE.md). The script runs as the workflow runs it, on synthetic events,
 # path lists and comments, and once against a fake of GitHub's API for the comments it reads
 # itself. A port of `tests/Repo/ReviewTrailTest.php` in the PHP plugins.
 #

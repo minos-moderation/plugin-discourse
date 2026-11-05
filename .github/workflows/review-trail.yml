@@ -2,8 +2,8 @@ name: Review trail
 
 # A pull request that changes a path on the risk list is red here until it carries
 #   Review: <agent> @ <head SHA> — AKCEPTACJA
-# for its current head, in its description or a member's comment (the rule is "Reviews" in
-# minos-moderation/minos, docs/claude/sessions.md; the check and its exempt list are
+# for its current head, in its description or a member's comment (the rule is in this repository's
+# CLAUDE.md; the check and its exempt list are
 # .github/review-trail/). A push or an edit of the description runs it again; after a review
 # comment, re-run this job. The line is a trace, not a proof, while sessions and the owner
 # share one account.
