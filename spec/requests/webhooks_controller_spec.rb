@@ -221,7 +221,15 @@ RSpec.describe MinosModeration::WebhooksController do
       end
     end
 
-    before { Jobs.run_immediately! }
+    # Jobs run inline, so Discourse's own `process_post` cooks the flag's message to the
+    # moderators right in the request: the post's link in it oneboxes with the author's
+    # letter avatar, whose size Discourse fetches over HTTP from the test host. Nothing
+    # serves it in tests; a 404 is the ordinary "image not reachable" path Discourse
+    # already takes, so the request stays offline.
+    before do
+      Jobs.run_immediately!
+      stub_request(:get, %r{/letter_avatar_proxy/}).to_return(status: 404)
+    end
 
     # The support flags raised on a post: pending `notify_moderators` items of the review
     # queue, from the system user.
