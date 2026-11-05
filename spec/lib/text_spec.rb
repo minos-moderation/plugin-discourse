@@ -36,6 +36,44 @@ RSpec.describe "MinosModeration::Text" do
       end
     end
 
+    # Punctuation the reader sees is text; only Markdown's syntax that shows no character
+    # (a rule, an empty heading or code block, a table's delimiter row, empty cells) is not.
+    describe "a post of punctuation alone" do
+      def sent(raw)
+        text.for_submission(raw)[:text]
+      end
+
+      it "is sent when the reader sees its characters" do
+        {
+          "*" => "*", # an empty list item: its bullet is shown
+          "-" => "-",
+          "1." => "1.",
+          "|---|---|\n|---|---|" => "|---|---|", # a header showing `---` in each cell
+          "| a |\n|---|\n| - |" => "| - |", # a row showing `-`
+          "> > *</span>" => "*", # a paragraph `*` in a nested quote
+          "-<!-- -->--" => "---", # a paragraph: the comment breaks the rule
+          "#<b></b>" => "#", # a paragraph: no blank after the `#`
+        }.each do |raw, shown|
+          expect(sent(raw)).to include(shown), raw.inspect
+        end
+      end
+
+      it "is not sent when Markdown shows the reader no character of it" do
+        ["```", "~~~", "------", "* * *", "#", "> ---", "| |\n|-|\n| |", "|  |  |\n|--|--|"].each do |raw|
+          expect(sent(raw)).to eq(""), raw.inspect
+          expect(text.for_submission(raw, "Tytuł tematu")[:text]).to eq(""), raw.inspect
+        end
+      end
+
+      it "leaves a post of invisible characters alone with nothing to send" do
+        ["​", "͏️", "ㅤ ⠀", "­⁠﻿", " \n\t "].each do |raw|
+          expect(sent(raw)).to eq(""), raw.inspect
+        end
+        # Invisible characters around punctuation do not hide it.
+        expect(sent("​*​")).to eq("*")
+      end
+    end
+
     it "keeps what it sends for a post with text: invisible characters change nothing else" do
       raw = "Zwykły tekst\u200B ![](upload://abc.png) dalej"
       expect(text.for_submission(raw)[:text]).to eq("Zwykły tekst  dalej")

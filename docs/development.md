@@ -228,11 +228,19 @@ reader can see is dropped; where removing something is not certain, more is sent
   without what is not the post's own text — images (Markdown, `<img>`, `[img]`, uploads,
   videos and audio, alt texts and titles included), attachments
   (`[name|attachment](upload://…) (12.3 KB)`), links with no text (`[](…)`), a link's
-  address, title and label, tooltips, and the lines that are only Markdown's syntax
-  (`Text::EMPTY_BLOCKS`: a thematic break, an empty heading or list item outside code and
-  HTML blocks, and a line of pipes, colons and dashes only on the lines of a table
-  markdown-it reads, `Reading#tables`; outside a table `|`, `| - |` or `|---|` is a
-  paragraph's text and is sent). When nothing of that is left but `Text::NOT_TEXT`
+  address, title and label, tooltips, and the lines that are only Markdown's syntax and
+  show the reader no character (`Text::EMPTY_BLOCKS`, outside code and HTML blocks: a
+  thematic break or an empty heading where the post's line holds nothing else,
+  `Text.bare_line?`; a table's delimiter row, only on its delimiter line; a line of
+  pipes and blanks, empty cells, on any line of a table markdown-it reads,
+  `Reading#tables`). Punctuation the reader sees is text (F7) and is sent: outside a
+  table `|`, `| - |` or `|---|` is a paragraph's text; a header's or a row's dashes
+  (`|---|---|` over a delimiter row shows `---` in each header cell) are cells' text; an
+  empty list item (`*`, `-`, `1.`) shows its bullet or number; and a line that only the
+  reduction emptied (`*</span>`, `-<!-- -->--`, `#<b></b>`) is a paragraph showing its
+  characters. A lone fence (```` ``` ````, `~~~`, an empty code block) and a rule
+  (`------`) show no character and have no text; the fence markers go in every case
+  (`FENCE_MARKER`). When nothing of that is left but `Text::NOT_TEXT`
   (format and control characters such as U+200B, U+00AD, U+2060, U+FEFF; separators and
   white space; lone combining marks such as U+034F or U+FE0F; the Hangul and Braille
   fillers; anything invisible by default), the sent text is empty, title included, and
@@ -291,7 +299,7 @@ and S8b.
 | `F5c` | a `ponow_za_s` past the time-out: the failure mode at once | `Decision.refusal_outlasts_timeout?` with the uncapped `ponow_za_s`, `Submission#retry_later`, `#defer`; `spec/lib/decision_spec.rb` "gives the failure mode at once to a refusal that ends after the post's time-out", `spec/jobs/minos_submit_spec.rb` "a daily limit that ends after the post's time-out" |
 | `F5d` | optional: re-send what fail-open published unassessed once the limit renews | not implemented: the rule is optional and off by default (nie wdrożono, reguła opcjonalna) |
 | `F6` | a failing row never stops a loop | `Sweep.run` (a `rescue` per entry, logged by step, reviewable and exception class); odstępstwo: no spec of an entry that fails yet (minos-moderation/minos#114) |
-| `F7` | no text to assess (a title alone, only an image, a video, an attachment or a link without a label, an image's `alt` notwithstanding), or a failed extraction: the failure mode; a bare URL the reader sees is text | `Text.own_text?`, `Text::OWN_MARKUP`, `Text::NOT_TEXT`, `Submission#run` (`no_text`); `spec/lib/text_spec.rb` "a post with no text of its own", `spec/fixtures/no_text.json`, `spec/lib/mock_gateway_spec.rb`, `spec/integration/text_reader_view_spec.rb`; a failed extraction (any exception) → `Submission#extract`, the failure mode at once (`extraction_failed`), the error's class alone in the log; `spec/jobs/minos_submit_spec.rb` "applies the failure mode at once when the text cannot be read" |
+| `F7` | no text to assess (a title alone, only an image, a video, an attachment or a link without a label, an image's `alt` notwithstanding), or a failed extraction: the failure mode; a bare URL the reader sees, and visible punctuation, are text | `Text.own_text?`, `Text::OWN_MARKUP`, `Text::NOT_TEXT`, `Text::EMPTY_BLOCKS` (only syntax that shows no character), `Submission#run` (`no_text`); `spec/lib/text_spec.rb` "a post with no text of its own", "a post of punctuation alone", `spec/fixtures/no_text.json`, `spec/lib/mock_gateway_spec.rb`, `spec/integration/text_reader_view_spec.rb`; a failed extraction (any exception) → `Submission#extract`, the failure mode at once (`extraction_failed`), the error's class alone in the log; `spec/jobs/minos_submit_spec.rb` "applies the failure mode at once when the text cannot be read" |
 | `F8` | switched on without a usable configuration: the failure mode; a fresh install is off | `minos_enabled` off by default; no key, no webhook secret or an unusable address → `Submission#run` applies `config` at once, without a request; `MinosGatewayProblem` on the dashboard; `spec/jobs/minos_submit_spec.rb` "applies the failure mode at once when the key is missing", "… when the webhook secret is missing". Odstępstwo: the notice is on the admin dashboard, not on every admin page (minos-moderation/minos#117) |
 | `F9` | switched on again: what waited is re-sent with a fresh time-out | odstępstwo: not implemented — switched on again, the sweeper gives every entry past its time-out the failure mode (minos-moderation/minos#115) |
 | `S1` | `tekst` is what the reader sees, `title`/`alt` included; nothing hidden is added | `Text.for_submission` ("What `tekst` is" above); `spec/fixtures/reader_view.json` in `spec/lib/text_spec.rb` and `spec/integration/text_reader_view_spec.rb` (`PrettyText.cook`) |
