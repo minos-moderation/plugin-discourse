@@ -15,7 +15,9 @@ module MinosModeration
   #   `core_hold` (the reason Discourse itself held the post, if it did); `text_digest` and
   #   `truncated` (what the current attempt sent, without the text); `digests` (every
   #   attempt's text digest, by attempt number as a String); `verdict` (the parsed payload,
-  #   minus `ocenzurowany` once applied); `original_digest` (never the unmasked text; an
+  #   minus `ocenzurowany` once applied); `support_due` (when a verdict with `wsparcie`
+  #   was taken for a finished entry, until its signal is raised: `support_raised_at`;
+  #   `Decision.late_support?`); `original_digest` (never the unmasked text; an
   #   entry written before S8b may also have `original_title_digest`); `post_id` (of a post the failure mode published); `outcome` and
   #   `reason` (what was done, and why).
   #

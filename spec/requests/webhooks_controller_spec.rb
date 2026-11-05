@@ -200,6 +200,133 @@ RSpec.describe MinosModeration::WebhooksController do
     end
   end
 
+  # Shared plugin rule A7: `wsparcie` reaches the moderators also when a person decided
+  # first, with a note that it came after that decision; the post stays as it was left.
+  describe "a verdict with wsparcie after a moderator's decision" do
+    let(:support) do
+      verdict.merge(
+        "kwalifikacja" => "zablokowane",
+        "kategorie" => ["samookaleczenie"],
+        "wsparcie" => true,
+      )
+    end
+    let(:after_note) do
+      I18n.with_locale(SiteSetting.default_locale) do
+        I18n.t("minos_moderation.notes.support_after_decision")
+      end
+    end
+    let(:flag_message) do
+      I18n.with_locale(SiteSetting.default_locale) do
+        I18n.t("minos_moderation.flags.support_after_decision")
+      end
+    end
+
+    before { Jobs.run_immediately! }
+
+    # The support flags raised on a post: pending `notify_moderators` items of the review
+    # queue, from the system user.
+    def support_flags(post)
+      ReviewableFlaggedPost
+        .pending
+        .where(target: post)
+        .joins(:reviewable_scores)
+        .where(
+          reviewable_scores: {
+            user_id: Discourse.system_user.id,
+            reviewable_score_type: PostActionType.types[:notify_moderators],
+          },
+        )
+    end
+
+    def notes
+      reviewable.reload.reviewable_notes.map(&:content)
+    end
+
+    def published
+      Post.find(reviewable.reload.target_id)
+    end
+
+    # A post the failure mode held after its time-out (fail-closed), then approved by a
+    # moderator before the verdict came.
+    def approved_after_timeout
+      entry = MinosModeration::Store.get(reviewable.id)
+      MinosModeration::Store.set(
+        reviewable.id,
+        entry.merge(
+          "status" => "done",
+          "outcome" => "leave",
+          "reason" => "timeout",
+          "verdict" => nil,
+          "handled_at" => Time.now.to_i,
+        ),
+      )
+      reviewable.perform(Discourse.system_user, :approve_post)
+    end
+
+    it "flags the approved post once, leaves it published, and drops a repeat" do
+      approved_after_timeout
+      post = published
+      body = JSON.generate(support)
+      deliver(body)
+      expect(response.status).to eq(200)
+
+      expect(support_flags(post.reload).count).to eq(1)
+      expect(post).not_to be_hidden
+      expect(post.deleted_at).to be_nil
+      expect(reviewable.reload).to be_approved
+      expect(notes).to include(a_string_including(after_note))
+      expect(MinosModeration::Store.get(reviewable.id)).not_to have_key("support_due")
+      # The flag's message to the moderators' group says when the verdict came.
+      message = Post.where(topic: Topic.private_messages).order(:id).last
+      expect(message&.raw.to_s).to include(flag_message)
+
+      deliver(body)
+      expect(response.status).to eq(200)
+      expect(support_flags(post.reload).count).to eq(1)
+      expect(notes.count { |content| content.include?(after_note) }).to eq(1)
+    end
+
+    it "flags a post a moderator approved while its verdict was on the way" do
+      reviewable.perform(Discourse.system_user, :approve_post)
+      deliver(JSON.generate(support))
+      post = published
+      expect(support_flags(post).count).to eq(1)
+      expect(post).not_to be_hidden
+      expect(MinosModeration::Store.get(reviewable.id)).to include(
+        "status" => "done",
+        "outcome" => "resolved_elsewhere",
+      )
+      deliver(JSON.generate(support))
+      expect(support_flags(post.reload).count).to eq(1)
+    end
+
+    it "raises nothing without wsparcie" do
+      approved_after_timeout
+      before = reviewable.reload.reviewable_notes.count
+      deliver(JSON.generate(support.merge("wsparcie" => false)))
+      expect(response.status).to eq(200)
+      expect(support_flags(published).count).to eq(0)
+      expect(reviewable.reload.reviewable_notes.count).to eq(before)
+      expect(published).not_to be_hidden
+    end
+
+    it "notes the signal on a post a moderator rejected, which stays rejected" do
+      reviewable.perform(Discourse.system_user, :reject_post)
+      deliver(JSON.generate(support))
+      expect(reviewable.reload).to be_rejected
+      expect(reviewable.target_id).to be_nil
+      expect(notes).to include(a_string_including(after_note))
+    end
+
+    it "notes the signal on a post a moderator edited in the queue, which stays held" do
+      reviewable.update!(payload: reviewable.payload.merge("raw" => "Tekst poprawiony w kolejce."))
+      deliver(JSON.generate(support))
+      expect(reviewable.reload).to be_pending
+      expect(notes).to include(after_note)
+      expect(MinosModeration::Store.get(reviewable.id)).to include("reason" => "edited")
+    end
+  end
+
   it "drops an id that is not a pending post of this forum, with 200" do
     ["k-1", "discourse:999999999.1", "discourse:0.1"].each do |id|
       expect_not_enqueued_with(job: :minos_apply_verdict) do

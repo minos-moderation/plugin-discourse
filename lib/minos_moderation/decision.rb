@@ -346,6 +346,37 @@ module MinosModeration
         entry["reason"] == "timeout"
     end
 
+    # Whether a verdict for a finished entry still raises the support signal (shared plugin
+    # rule A7: `wsparcie` is a signal whatever the verdict, also after a person's decision).
+    # The entry finished without a verdict — a moderator approved, rejected or edited the
+    # post first, or the failure mode decided it — and a verdict with `wsparcie` arrives for
+    # the text it waits on. Only the signal is due: the post stays as the person or the
+    # failure mode left it. An entry that already holds a verdict (applied, or a signal
+    # already taken) takes none, so a repeated delivery raises nothing twice.
+    #
+    # @param entry [Hash{String => Object}, nil] the entry as `Store` keeps it.
+    # @param verdict [Hash{String => Object}] a payload read by `WebhookPayload.parse`.
+    # @param attempt [Integer, nil] the attempt in the delivered item id.
+    # @return [Boolean]
+    def self.late_support?(entry, verdict, attempt)
+      return false unless entry.is_a?(Hash) && verdict.is_a?(Hash)
+      return false unless entry["status"] == "done" && verdict["wsparcie"] == true
+      return false unless entry["verdict"].nil?
+
+      verdict_for_entry?(entry, attempt)
+    end
+
+    # Whether the support note says that the verdict came after a person's decision (shared
+    # plugin rule A7): a moderator edited the post in the queue (`edited`), a person acted
+    # on a published post (`person_acted`), or approved or rejected the held post first.
+    #
+    # @param reason [Symbol, String, nil] the decision's reason ({REASONS}).
+    # @param decided [Boolean] whether the review item is no longer pending.
+    # @return [Boolean]
+    def self.support_after_person?(reason, decided: false)
+      decided == true || %w[edited person_acted].include?(reason.to_s)
+    end
+
     # Whether a refusal keeps the gateway closed past the post's time-out, so that the
     # failure mode applies at once instead of a retry that could only come too late
     # (shared plugin rule 3(a)). The gateway's `ponow_za_s` is compared as it was given,
@@ -372,11 +403,17 @@ module MinosModeration
     #   (no verdict in time: the failure mode), `:reapply` (a received verdict was not
     #   applied), `:abandon` (a received verdict could not be applied for a day: leave the
     #   post to the moderators), `:purge` (a finished entry is old) or nil (nothing yet).
+    #   A finished entry whose support signal ({late_support?}) waits for a lost job is
+    #   `:reapply` too, for a day.
     def self.for_entry(entry, now:, timeout_s:)
       age = ->(field) { now - entry[field].to_i }
       case entry["status"]
       when "done", "auto_published"
-        :purge if age.call("handled_at") > PURGE_AFTER_S
+        return :purge if age.call("handled_at") > PURGE_AFTER_S
+        return nil unless entry["status"] == "done" && entry["support_due"].is_a?(Integer)
+
+        waited = age.call("support_due")
+        :reapply if waited > REAPPLY_AFTER_S && waited <= MAX_REAPPLY_S
       when "received"
         return :abandon if age.call("received_at") > MAX_REAPPLY_S
 

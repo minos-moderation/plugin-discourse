@@ -91,7 +91,11 @@ and the verdict without its masked text, for 30 days. A table without dates
    `Decision.held_after_timeout?`) still waits while its review item is pending (shared
    plugin rule A6): the late verdict is applied as if it had come in time (an edit in the
    queue since then only notes it, `edited`); once a moderator approved or rejected the
-   post, the verdict is dropped with a 200 and the entry stays as it was. The current
+   post, the verdict is not applied (a 200) and the post stays as it was. The one
+   exception is `wsparcie` (shared plugin rule A7): a verdict with it for a finished
+   entry that holds no verdict yet (`Decision.late_support?`: a moderator decided first,
+   or the failure mode did) is stored with `support_due` and only raises the support
+   signal (step 5). The current
    attempt's id is taken, and an earlier attempt's when its stored digest equals the
    current attempt's (`digests`, `Decision.verdict_for_entry?`: the same text was
    assessed); a repeat, any later verdict for the same post, an earlier attempt of another
@@ -134,7 +138,18 @@ and the verdict without its masked text, for 30 days. A table without dates
    user (`PostActionCreator.create`, a Polish message naming no content), a pending
    `ReviewableFlaggedPost` in the same queue. Discourse sends the flag's message to the
    moderators' group; nothing reaches the author. A post already deleted or hidden gets
-   no flag.
+   no flag (Discourse refuses a flag on a hidden post): the note is its signal. The
+   signal also comes after a person's decision, "whatever the verdict"
+   (`VerdictApplier#support_after`): a post a moderator approved before its verdict came
+   (on time, or after the failure mode held it) is flagged; one rejected, or edited in
+   the queue, gets the note on its review item; a fail-open post a person acted on
+   (`person_acted`) is flagged unless it is deleted or hidden. The note and the flag
+   then say that the verdict came after a person's decision
+   (`minos_moderation.notes.support_after_decision`, `flags.support_after_decision`),
+   and the post stays exactly as the person left it. The signal is raised once: the
+   entry keeps the verdict, so a repeated delivery is dropped, a lost job is re-run by
+   the sweeper for a day (`support_due`), and Discourse refuses a second flag by the
+   same user on a post.
 6. `Sweep` applies `Decision.for_entry` to every entry: the failure mode after
    `minos_timeout_minutes` (never under `Decision::MIN_TIMEOUT_MINUTES`, 20, also for a
    lower value stored before that minimum: Discourse checks `min` only on write), a
@@ -298,7 +313,7 @@ and S8b.
 | `A4` | notifications once, sent by the plugin where approval sends none | `perform(:approve_post)` sends Discourse's own notifications; a late verdict publishes nothing again. Not verified: the "edited" notification a late mask sends the author through `PostRevisor` |
 | `A5` | a hold is the platform's own state | `ReviewableQueuedPost` (`NewPostManager#enqueue`); `spec/integration/new_post_handler_spec.rb` "holds a new reply as a queued post" |
 | `A6` | a late verdict also applies to a post the failure mode held | `Decision.held_after_timeout?`, `Receiver.accept`; `spec/jobs/minos_apply_verdict_spec.rb` "a verdict for a post the failure mode held after its time-out", `spec/requests/webhooks_controller_spec.rb` |
-| `A7` | `wsparcie` is an active signal for moderators, never an automatic removal | `VerdictApplier#signal_support` (a `notify_moderators` flag), `Decision` (never `reject` or `hide` with `wsparcie`); `spec/jobs/minos_apply_verdict_spec.rb` "wsparcie on a published post", `spec/lib/decision_spec.rb` "wsparcie over every combination" |
+| `A7` | `wsparcie` is an active signal for moderators, also after a person's decision, never an automatic removal | `VerdictApplier#signal_support` (a `notify_moderators` flag), `Decision` (never `reject` or `hide` with `wsparcie`); after a person's decision `Decision.late_support?`, `Receiver.accept`, `VerdictApplier#support_after` (a flag on a post a moderator approved, the note "po decyzji moderatora" on a rejected or queue-edited one; a deleted or hidden post cannot carry a flag, the note is its signal); `spec/jobs/minos_apply_verdict_spec.rb` "wsparcie on a published post", "still flags a post a moderator edited", `spec/requests/webhooks_controller_spec.rb` "a verdict with wsparcie after a moderator's decision", `spec/lib/decision_spec.rb` "wsparcie over every combination", "a support signal for a post decided before its verdict" |
 | `A8` | the plugin's own data (the original, the verdicts) is kept 30 days; the platform's records follow the forum's rules | `Decision::PURGE_AFTER_S`, `Sweep` (`purge`); the original only in Discourse's records, for staff (`PostRevisor#revise!(…, hidden: true)`); README "Co wtyczka przechowuje i jak długo"; `spec/jobs/minos_sweeper_spec.rb` "forgets a finished entry after thirty days", `spec/jobs/minos_apply_verdict_spec.rb` "keeps the original in a revision staff can see and readers cannot" |
 | `P1` | the archive carries no lock file, tests or mock, and pins the client | n/d: Discourse installs the plugin from its git repository, with no archive, and the plugin runs no client-php code |
 | `D1` | this file is the one source; `CLAUDE.md` points at it, `docs/development.md` maps it | `CLAUDE.md` (one line), this table; `spec/lib/compliance_table_spec.rb` |
@@ -516,7 +531,9 @@ Verified in Discourse's source (`main`, September 2026) or in
   `ReviewableFlaggedPost.needs_review!` item and a message to the `moderators` group from
   the flagger, never to the author; the system user may flag, `User#in_any_groups?`
   treats it as staff; a hidden post cannot be flagged), `PostActionType.types`
-  (`main`, 2026-10-28);
+  (`main`, 2026-10-28); a second flag by the same user on a post is refused
+  (`PostGuardian#post_can_act?`, `already_did_flagging`), and `perform_approve_post`
+  sets the queued post's `target` to the created post (`main`, 2026-11-05);
 - `Post#hide!(post_action_type_id)` with `PostActionType.types[:inappropriate]` (it
   also messages the author and hides a first post's topic), `Post.with_deleted`,
   `Post#version`, `PostRevisor#revise!(editor, fields, skip_validations:, bypass_bump:,

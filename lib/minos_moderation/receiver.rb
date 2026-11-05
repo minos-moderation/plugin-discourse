@@ -12,7 +12,12 @@ module MinosModeration
   # So does a post the failure mode held after its time-out, while its review item is
   # still undecided (shared plugin rule A6, `Decision.held_after_timeout?`): the verdict
   # is applied as if it had come in time. Once a moderator approved or rejected it, the
-  # verdict is dropped and the entry stays as it was.
+  # verdict is not applied and the post stays as it was.
+  #
+  # One exception keeps a verdict for a finished post: `wsparcie` (shared plugin rule A7,
+  # `Decision.late_support?`). A post a person decided first, or the failure mode, gets the
+  # support signal and nothing else, once: the entry keeps the verdict, so a repeat is
+  # dropped.
   # The verdict is stored with the entry, so the job reads it from there and not from its
   # arguments.
   module Receiver
@@ -31,14 +36,18 @@ module MinosModeration
         Store.lock(id) do
           entry = Store.get(id)
           next false unless entry
-          unless WAITING.include?(entry["status"]) ||
-                   (Decision.held_after_timeout?(entry) && undecided?(id))
-            next false
-          end
-          next false unless Decision.verdict_for_entry?(entry, attempt)
 
-          received = { "status" => "received", "received_at" => Time.now.to_i }
-          Store.set(id, entry.merge(received).merge("verdict" => payload))
+          now = Time.now.to_i
+          if waits?(id, entry, attempt)
+            received = { "status" => "received", "received_at" => now }
+            Store.set(id, entry.merge(received).merge("verdict" => payload))
+            next true
+          end
+          next false unless Decision.late_support?(entry, payload, attempt)
+
+          # Only the signal is due: the masked text is not needed, and is never kept.
+          late = { "received_at" => now, "support_due" => now }
+          Store.set(id, entry.merge(late).merge("verdict" => payload.except("ocenzurowany")))
           true
         end
       return :ignored unless taken
@@ -48,11 +57,24 @@ module MinosModeration
     end
 
     # @param id [Integer] a reviewable's id.
+    # @param entry [Hash{String => Object}] its entry.
+    # @param attempt [Integer, nil] the attempt in the delivered item id.
+    # @return [Boolean] whether the entry waits for this verdict, to apply it.
+    def self.waits?(id, entry, attempt)
+      unless WAITING.include?(entry["status"]) ||
+               (Decision.held_after_timeout?(entry) && undecided?(id))
+        return false
+      end
+
+      Decision.verdict_for_entry?(entry, attempt)
+    end
+
+    # @param id [Integer] a reviewable's id.
     # @return [Boolean] whether no one has approved or rejected the held post yet.
     def self.undecided?(id)
       ::ReviewableQueuedPost.find_by(id: id)&.pending? == true
     end
 
-    private_class_method :undecided?
+    private_class_method :waits?, :undecided?
   end
 end
