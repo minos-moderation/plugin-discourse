@@ -55,7 +55,13 @@ Kilka zasad, które zawsze obowiązują:
   systemowego **flagę „powiadom moderatorów”** z wyjaśnieniem — nowe zgłoszenie w tej
   samej kolejce (Discourse wysyła wtedy wiadomość do grupy moderatorów). Taki post nigdy
   nie jest odrzucany, usuwany ani ukrywany automatycznie, a wtyczka nie wysyła w tej
-  sprawie żadnej wiadomości autorowi. O tym decyduje człowiek.
+  sprawie żadnej wiadomości autorowi. O tym decyduje człowiek. Sygnał przychodzi także
+  wtedy, gdy moderator zdecydował o poście, zanim przyszedł werdykt (zatwierdził go,
+  odrzucił albo zmienił jego treść): post zostaje taki, jakim go zostawił, a notatka w
+  zgłoszeniu — i flaga, jeśli post jest opublikowany — mówi, że werdykt przyszedł **po
+  decyzji moderatora**. Ponowna dostawa tego samego werdyktu nie dodaje drugiej flagi.
+  Post odrzucony, usunięty albo ukryty nie może dostać flagi (Discourse na to nie
+  pozwala), więc sygnałem jest wtedy sama notatka w historii jego zgłoszenia.
 - **Reguły forum mają pierwszeństwo.** Post, który Discourse i tak wstrzymałby sam (np.
   od nowego użytkownika, ze słowem z listy obserwowanych słów, w kategorii wymagającej
   zatwierdzenia), czeka na moderatora jak zawsze; werdykt Minos jest wtedy tylko
@@ -72,7 +78,8 @@ Kilka zasad, które zawsze obowiązują:
   `fail-open`, post zostaje ukryty (z sygnałem wsparcia — zostaje widoczny i dostaje
   flagę), a tytuł pozostaje bez zmian.
 - Moderator może w każdej chwili sam zatwierdzić albo odrzucić post w kolejce; późniejszy
-  werdykt zostanie wtedy pominięty.
+  werdykt zostanie wtedy pominięty — poza sygnałem wsparcia, który i tak trafi do
+  moderatorów (zob. wyżej).
 
 Nie są wstrzymywane: posty moderatorów i administratorów (ustawienie `minos_skip_staff`),
 posty botów i systemu, **wiadomości prywatne** (Discourse nigdy ich nie kolejkuje, a
@@ -172,7 +179,7 @@ pada na tytuł tematu), a przy
 `bezpieczne` nic się nie zmienia. Jeśli w międzyczasie ktoś już zajął się postem (edycja,
 ukrycie, usunięcie, rozpatrzona flaga), jego decyzja zostaje. Post z sygnałem wsparcia
 nigdy nie jest ukrywany: zostaje widoczny, a moderatorzy dostają notatkę i flagę w
-kolejce przeglądu.
+kolejce przeglądu — także po takiej decyzji, z dopiskiem, że werdykt przyszedł po niej.
 
 To samo ustawienie decyduje o postach dłuższych niż 3000 znaków: brama ocenia tylko ich
 początek, więc przy `fail-closed` taki post (jeśli nie został zablokowany) czeka na
@@ -269,13 +276,16 @@ Do bramy trafia, dla każdego wstrzymanego posta:
   Wysyłane jest **pierwsze 3000 znaków** (limit bramy). Post **bez własnego tekstu** —
   którego widoczna treść to tylko obrazek (także z tekstem alternatywnym albo tytułem),
   film, załącznik albo link bez widocznego opisu, ewentualnie ze znakami niewidocznymi
-  (np. spacja zerowej szerokości, miękki dywiz) albo samą składnią Markdownu (linia
-  pozioma, pusty nagłówek, pusta pozycja listy, pusta tabela) — nie jest wysyłany wcale,
+  (np. spacja zerowej szerokości, miękki dywiz) albo samą składnią Markdownu, która nie
+  pokazuje czytelnikowi żadnego znaku (linia pozioma, pusty nagłówek, pusty blok kodu,
+  pusta tabela) — nie jest wysyłany wcale,
   nawet z tytułem tematu: brama nie ocenia obrazów, a sam adres nie jest treścią. Taki
   post przechodzi w tryb awarii (`minos_failure_mode`), tak samo jak post, którego tekstu
   nie udało się odczytać z powodu błędu (w logu zostaje wtedy tylko nazwa klasy błędu).
   Adres wpisany wprost i widoczny dla czytelnika (`https://…`) jest tekstem i jest
-  wysyłany. Tekst alternatywny i tytuł obrazka idą tylko obok innych słów posta;
+  wysyłany; tak samo interpunkcja, którą czytelnik widzi (np. sama gwiazdka albo
+  kreska — punktor pustej listy — czy kreski w nagłówku tabeli). Tekst alternatywny i
+  tytuł obrazka idą tylko obok innych słów posta;
 - **profil** z ustawienia `minos_profile`;
 - **sygnały antyspamowe**: liczba linków w poście, to, czy to pierwszy post autora, oraz
   do 10 domen, do których prowadzą linki i obrazki (np. `example.com`, bez reszty adresu).

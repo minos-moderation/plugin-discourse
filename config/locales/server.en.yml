@@ -50,8 +50,10 @@ en:
       reason: "Powód: %{powod}."
       masked: "Minos: tak brama zamaskowała tekst wysłany do oceny (█ w miejscu ocenzurowanych fragmentów): %{tekst}"
       support: "Minos: treść może świadczyć o tym, że autor jest w kryzysie (samookaleczenie). To sygnał, by okazać mu wsparcie, a nie by go karać."
+      support_after_decision: "Minos: werdykt z sygnałem „wsparcie” przyszedł już po decyzji moderatora albo po edycji posta — treść może świadczyć o tym, że autor jest w kryzysie (samookaleczenie). Wtyczka zostawia post tak, jak go zostawiono; to sygnał, by okazać autorowi wsparcie, a nie by go karać."
     flags:
       support: "Minos: brama oznaczyła ten opublikowany post sygnałem „wsparcie” — jego treść może świadczyć o tym, że autor jest w kryzysie (samookaleczenie). Wtyczka nie ukrywa ani nie usuwa takiego posta i nie pisze do autora; o tym, czy i jak mu pomóc, decyduje moderator."
+      support_after_decision: "Minos: brama oznaczyła ten post sygnałem „wsparcie”, ale werdykt przyszedł już po decyzji moderatora albo po edycji posta — jego treść może świadczyć o tym, że autor jest w kryzysie (samookaleczenie). Wtyczka zostawia post tak, jak go zostawiono, i nie pisze do autora; o tym, czy i jak mu pomóc, decyduje moderator."
     actions:
       approve: "Post opublikowano."
       approve_unassessed: "Post opublikowano bez pełnej oceny, zgodnie z ustawieniem fail-open."

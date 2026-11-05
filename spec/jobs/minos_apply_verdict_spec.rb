@@ -525,6 +525,20 @@ RSpec.describe Jobs::MinosApplyVerdict do
       expect(entry).to include("outcome" => "keep", "reason" => "person_acted")
     end
 
+    it "still flags a post a moderator edited when wsparcie comes, and keeps the edit (A7)" do
+      edited = "#{raw} Poprawione przez moderatora."
+      PostRevisor.new(post).revise!(Fabricate(:moderator), { raw: edited }, force_new_version: true)
+      late(assessed("zablokowane", "kategorie" => ["samookaleczenie"], "wsparcie" => true))
+      expect(post).not_to be_hidden
+      expect(post.raw).to eq(edited)
+      expect(entry).to include("outcome" => "keep", "reason" => "person_acted")
+      expect(support_flags(post).count).to eq(1)
+      after = I18n.with_locale(SiteSetting.default_locale) do
+        I18n.t("minos_moderation.notes.support_after_decision")
+      end
+      expect(notes).to include(after)
+    end
+
     it "notes no mask after a person acted on the post: the masks are of an older text" do
       edited = "#{raw} Poprawione przez moderatora."
       PostRevisor.new(post).revise!(Fabricate(:moderator), { raw: edited }, force_new_version: true)

@@ -91,7 +91,11 @@ and the verdict without its masked text, for 30 days. A table without dates
    `Decision.held_after_timeout?`) still waits while its review item is pending (shared
    plugin rule A6): the late verdict is applied as if it had come in time (an edit in the
    queue since then only notes it, `edited`); once a moderator approved or rejected the
-   post, the verdict is dropped with a 200 and the entry stays as it was. The current
+   post, the verdict is not applied (a 200) and the post stays as it was. The one
+   exception is `wsparcie` (shared plugin rule A7): a verdict with it for a finished
+   entry that holds no verdict yet (`Decision.late_support?`: a moderator decided first,
+   or the failure mode did) is stored with `support_due` and only raises the support
+   signal (step 5). The current
    attempt's id is taken, and an earlier attempt's when its stored digest equals the
    current attempt's (`digests`, `Decision.verdict_for_entry?`: the same text was
    assessed); a repeat, any later verdict for the same post, an earlier attempt of another
@@ -134,7 +138,18 @@ and the verdict without its masked text, for 30 days. A table without dates
    user (`PostActionCreator.create`, a Polish message naming no content), a pending
    `ReviewableFlaggedPost` in the same queue. Discourse sends the flag's message to the
    moderators' group; nothing reaches the author. A post already deleted or hidden gets
-   no flag.
+   no flag (Discourse refuses a flag on a hidden post): the note is its signal. The
+   signal also comes after a person's decision, "whatever the verdict"
+   (`VerdictApplier#support_after`): a post a moderator approved before its verdict came
+   (on time, or after the failure mode held it) is flagged; one rejected, or edited in
+   the queue, gets the note on its review item; a fail-open post a person acted on
+   (`person_acted`) is flagged unless it is deleted or hidden. The note and the flag
+   then say that the verdict came after a person's decision
+   (`minos_moderation.notes.support_after_decision`, `flags.support_after_decision`),
+   and the post stays exactly as the person left it. The signal is raised once: the
+   entry keeps the verdict, so a repeated delivery is dropped, a lost job is re-run by
+   the sweeper for a day (`support_due`), and Discourse refuses a second flag by the
+   same user on a post.
 6. `Sweep` applies `Decision.for_entry` to every entry: the failure mode after
    `minos_timeout_minutes` (never under `Decision::MIN_TIMEOUT_MINUTES`, 20, also for a
    lower value stored before that minimum: Discourse checks `min` only on write), a
@@ -213,11 +228,19 @@ reader can see is dropped; where removing something is not certain, more is sent
   without what is not the post's own text — images (Markdown, `<img>`, `[img]`, uploads,
   videos and audio, alt texts and titles included), attachments
   (`[name|attachment](upload://…) (12.3 KB)`), links with no text (`[](…)`), a link's
-  address, title and label, tooltips, and the lines that are only Markdown's syntax
-  (`Text::EMPTY_BLOCKS`: a thematic break, an empty heading or list item outside code and
-  HTML blocks, and a line of pipes, colons and dashes only on the lines of a table
-  markdown-it reads, `Reading#tables`; outside a table `|`, `| - |` or `|---|` is a
-  paragraph's text and is sent). When nothing of that is left but `Text::NOT_TEXT`
+  address, title and label, tooltips, and the lines that are only Markdown's syntax and
+  show the reader no character (`Text::EMPTY_BLOCKS`, outside code and HTML blocks: a
+  thematic break or an empty heading where the post's line holds nothing else,
+  `Text.bare_line?`; a table's delimiter row, only on its delimiter line; a line of
+  pipes and blanks, empty cells, on any line of a table markdown-it reads,
+  `Reading#tables`). Punctuation the reader sees is text (F7) and is sent: outside a
+  table `|`, `| - |` or `|---|` is a paragraph's text; a header's or a row's dashes
+  (`|---|---|` over a delimiter row shows `---` in each header cell) are cells' text; an
+  empty list item (`*`, `-`, `1.`) shows its bullet or number; and a line that only the
+  reduction emptied (`*</span>`, `-<!-- -->--`, `#<b></b>`) is a paragraph showing its
+  characters. A lone fence (```` ``` ````, `~~~`, an empty code block) and a rule
+  (`------`) show no character and have no text; the fence markers go in every case
+  (`FENCE_MARKER`). When nothing of that is left but `Text::NOT_TEXT`
   (format and control characters such as U+200B, U+00AD, U+2060, U+FEFF; separators and
   white space; lone combining marks such as U+034F or U+FE0F; the Hangul and Braille
   fillers; anything invisible by default), the sent text is empty, title included, and
@@ -276,7 +299,7 @@ and S8b.
 | `F5c` | a `ponow_za_s` past the time-out: the failure mode at once | `Decision.refusal_outlasts_timeout?` with the uncapped `ponow_za_s`, `Submission#retry_later`, `#defer`; `spec/lib/decision_spec.rb` "gives the failure mode at once to a refusal that ends after the post's time-out", `spec/jobs/minos_submit_spec.rb` "a daily limit that ends after the post's time-out" |
 | `F5d` | optional: re-send what fail-open published unassessed once the limit renews | not implemented: the rule is optional and off by default (nie wdrożono, reguła opcjonalna) |
 | `F6` | a failing row never stops a loop | `Sweep.run` (a `rescue` per entry, logged by step, reviewable and exception class); odstępstwo: no spec of an entry that fails yet (minos-moderation/minos#114) |
-| `F7` | no text to assess (a title alone, only an image, a video, an attachment or a link without a label, an image's `alt` notwithstanding), or a failed extraction: the failure mode; a bare URL the reader sees is text | `Text.own_text?`, `Text::OWN_MARKUP`, `Text::NOT_TEXT`, `Submission#run` (`no_text`); `spec/lib/text_spec.rb` "a post with no text of its own", `spec/fixtures/no_text.json`, `spec/lib/mock_gateway_spec.rb`, `spec/integration/text_reader_view_spec.rb`; a failed extraction (any exception) → `Submission#extract`, the failure mode at once (`extraction_failed`), the error's class alone in the log; `spec/jobs/minos_submit_spec.rb` "applies the failure mode at once when the text cannot be read" |
+| `F7` | no text to assess (a title alone, only an image, a video, an attachment or a link without a label, an image's `alt` notwithstanding), or a failed extraction: the failure mode; a bare URL the reader sees, and visible punctuation, are text | `Text.own_text?`, `Text::OWN_MARKUP`, `Text::NOT_TEXT`, `Text::EMPTY_BLOCKS` (only syntax that shows no character), `Submission#run` (`no_text`); `spec/lib/text_spec.rb` "a post with no text of its own", "a post of punctuation alone", `spec/fixtures/no_text.json`, `spec/lib/mock_gateway_spec.rb`, `spec/integration/text_reader_view_spec.rb`; a failed extraction (any exception) → `Submission#extract`, the failure mode at once (`extraction_failed`), the error's class alone in the log; `spec/jobs/minos_submit_spec.rb` "applies the failure mode at once when the text cannot be read" |
 | `F8` | switched on without a usable configuration: the failure mode; a fresh install is off | `minos_enabled` off by default; no key, no webhook secret or an unusable address → `Submission#run` applies `config` at once, without a request; `MinosGatewayProblem` on the dashboard; `spec/jobs/minos_submit_spec.rb` "applies the failure mode at once when the key is missing", "… when the webhook secret is missing". Odstępstwo: the notice is on the admin dashboard, not on every admin page (minos-moderation/minos#117) |
 | `F9` | switched on again: what waited is re-sent with a fresh time-out | odstępstwo: not implemented — switched on again, the sweeper gives every entry past its time-out the failure mode (minos-moderation/minos#115) |
 | `S1` | `tekst` is what the reader sees, `title`/`alt` included; nothing hidden is added | `Text.for_submission` ("What `tekst` is" above); `spec/fixtures/reader_view.json` in `spec/lib/text_spec.rb` and `spec/integration/text_reader_view_spec.rb` (`PrettyText.cook`) |
@@ -298,7 +321,7 @@ and S8b.
 | `A4` | notifications once, sent by the plugin where approval sends none | `perform(:approve_post)` sends Discourse's own notifications; a late verdict publishes nothing again. Not verified: the "edited" notification a late mask sends the author through `PostRevisor` |
 | `A5` | a hold is the platform's own state | `ReviewableQueuedPost` (`NewPostManager#enqueue`); `spec/integration/new_post_handler_spec.rb` "holds a new reply as a queued post" |
 | `A6` | a late verdict also applies to a post the failure mode held | `Decision.held_after_timeout?`, `Receiver.accept`; `spec/jobs/minos_apply_verdict_spec.rb` "a verdict for a post the failure mode held after its time-out", `spec/requests/webhooks_controller_spec.rb` |
-| `A7` | `wsparcie` is an active signal for moderators, never an automatic removal | `VerdictApplier#signal_support` (a `notify_moderators` flag), `Decision` (never `reject` or `hide` with `wsparcie`); `spec/jobs/minos_apply_verdict_spec.rb` "wsparcie on a published post", `spec/lib/decision_spec.rb` "wsparcie over every combination" |
+| `A7` | `wsparcie` is an active signal for moderators, also after a person's decision, never an automatic removal | `VerdictApplier#signal_support` (a `notify_moderators` flag), `Decision` (never `reject` or `hide` with `wsparcie`); after a person's decision `Decision.late_support?`, `Receiver.accept`, `VerdictApplier#support_after` (a flag on a post a moderator approved, the note "po decyzji moderatora" on a rejected or queue-edited one; a deleted or hidden post cannot carry a flag, the note is its signal); `spec/jobs/minos_apply_verdict_spec.rb` "wsparcie on a published post", "still flags a post a moderator edited", `spec/requests/webhooks_controller_spec.rb` "a verdict with wsparcie after a moderator's decision", `spec/lib/decision_spec.rb` "wsparcie over every combination", "a support signal for a post decided before its verdict" |
 | `A8` | the plugin's own data (the original, the verdicts) is kept 30 days; the platform's records follow the forum's rules | `Decision::PURGE_AFTER_S`, `Sweep` (`purge`); the original only in Discourse's records, for staff (`PostRevisor#revise!(…, hidden: true)`); README "Co wtyczka przechowuje i jak długo"; `spec/jobs/minos_sweeper_spec.rb` "forgets a finished entry after thirty days", `spec/jobs/minos_apply_verdict_spec.rb` "keeps the original in a revision staff can see and readers cannot" |
 | `P1` | the archive carries no lock file, tests or mock, and pins the client | n/d: Discourse installs the plugin from its git repository, with no archive, and the plugin runs no client-php code |
 | `D1` | this file is the one source; `CLAUDE.md` points at it, `docs/development.md` maps it | `CLAUDE.md` (one line), this table; `spec/lib/compliance_table_spec.rb` |
@@ -516,7 +539,9 @@ Verified in Discourse's source (`main`, September 2026) or in
   `ReviewableFlaggedPost.needs_review!` item and a message to the `moderators` group from
   the flagger, never to the author; the system user may flag, `User#in_any_groups?`
   treats it as staff; a hidden post cannot be flagged), `PostActionType.types`
-  (`main`, 2026-10-28);
+  (`main`, 2026-10-28); a second flag by the same user on a post is refused
+  (`PostGuardian#post_can_act?`, `already_did_flagging`), and `perform_approve_post`
+  sets the queued post's `target` to the created post (`main`, 2026-11-05);
 - `Post#hide!(post_action_type_id)` with `PostActionType.types[:inappropriate]` (it
   also messages the author and hides a first post's topic), `Post.with_deleted`,
   `Post#version`, `PostRevisor#revise!(editor, fields, skip_validations:, bypass_bump:,

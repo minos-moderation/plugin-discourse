@@ -21,7 +21,10 @@ module MinosModeration
   # verdict: a post still held is in their review queue already, with the note; a post
   # that is published gets a `notify_moderators` flag from the system user, a new item in
   # the same queue. Nothing about it ever goes to the author, and such a post is never
-  # rejected or hidden automatically (`Decision`).
+  # rejected or hidden automatically (`Decision`). The signal comes even when a person
+  # decided first (approved, rejected or edited the post): the note and the flag then say
+  # that the verdict came after that decision, and the post stays as the person left it
+  # (`support_after`).
   #
   # The unmasked text is never copied into the plugin's store: the reviewable's history (a
   # post masked in the queue) or a hidden revision of the post (a post masked after a
@@ -60,6 +63,7 @@ module MinosModeration
     def apply_verdict
       Store.lock(@id) do
         entry = Store.get(@id)
+        next late_support(entry) if entry && entry["status"] == "done" && entry["support_due"]
         next unless entry && entry["status"] == "received"
 
         verdict = entry["verdict"].to_h
@@ -67,6 +71,9 @@ module MinosModeration
 
         reviewable = pending_reviewable
         unless reviewable
+          # A moderator approved or rejected the post first: the verdict changes nothing,
+          # but `wsparcie` still reaches the moderators (A7).
+          support_after(entry, verdict) if verdict["wsparcie"] == true
           next close(entry.merge("verdict" => stored(verdict)), "resolved_elsewhere")
         end
 
@@ -146,6 +153,44 @@ module MinosModeration
     end
 
     private
+
+    # Raises the support signal of a verdict taken for a finished entry
+    # (`Decision.late_support?`), once: the entry keeps the verdict and loses the mark.
+    # Runs under the lock.
+    #
+    # @param entry [Hash{String => Object}] the finished entry, with `support_due`.
+    # @return [void]
+    def late_support(entry)
+      support_after(entry, entry["verdict"].to_h)
+      Store.set(@id, entry.except("support_due").merge("support_raised_at" => Time.now.to_i))
+    end
+
+    # The support signal for a verdict that came after a person's decision or after the
+    # failure mode (shared plugin rule A7): a note on the review item, with the verdict and
+    # whether a person decided first, and a flag on the post when a moderator published
+    # it. The post itself stays exactly as it is: published, held, rejected or deleted.
+    #
+    # @param entry [Hash{String => Object}] the post's entry.
+    # @param verdict [Hash{String => Object}] the verdict with `wsparcie`.
+    # @return [void]
+    def support_after(entry, verdict)
+      reviewable = ::ReviewableQueuedPost.find_by(id: @id)
+      decided = reviewable.nil? || !reviewable.pending?
+      after = Decision.support_after_person?(entry["reason"], decided: decided)
+      note(reviewable, "#{verdict_header(verdict)} #{support_note(after)}") if reviewable
+      post = decided && reviewable && published_post(reviewable.target_id)
+      signal_support(post, after_decision: after) if post
+    end
+
+    # @param after [Boolean] whether the verdict came after a person's decision.
+    # @return [String] the moderators' note about `wsparcie`.
+    def support_note(after)
+      if after
+        translate("minos_moderation.notes.support_after_decision")
+      else
+        translate("minos_moderation.notes.support")
+      end
+    end
 
     # @param missing_digest [Boolean] what an entry without a digest counts as: a verdict
     #   always has one (the text was sent), a failure may come before anything was sent.
@@ -288,7 +333,9 @@ module MinosModeration
           [decision, {}]
         end
       record(reviewable, done, verdict) if reviewable
-      signal_support(post) if done.support
+      if done.support
+        signal_support(post, after_decision: Decision.support_after_person?(done.reason))
+      end
       close(
         entry.merge(extra).merge("verdict" => stored(verdict), "reason" => done.reason.to_s),
         done.action.to_s,
@@ -304,20 +351,30 @@ module MinosModeration
     # Puts the support signal in the moderators' own queue (shared plugin rule A7): a
     # `notify_moderators` flag by the system user on a published post, with a Polish
     # message that names no content. Discourse sends that message to the moderators'
-    # group, never to the author. A post already deleted or hidden is a person's decision
-    # and gets none; a flag Discourse refuses leaves the note alone.
+    # group, never to the author. A post already deleted or hidden cannot carry one
+    # (Discourse refuses a flag on a hidden post): the note on its review item is the
+    # signal there. A flag Discourse refuses leaves the note alone; Discourse refuses a
+    # second flag by the same user on one post, so the flag is never doubled.
     #
     # @param post [Post, nil] the published post.
+    # @param after_decision [Boolean] whether the verdict came after a person's decision,
+    #   which the message then says.
     # @return [void]
-    def signal_support(post)
+    def signal_support(post, after_decision: false)
       return if post.nil? || post.deleted_at || post.hidden?
 
+      message =
+        if after_decision
+          translate("minos_moderation.flags.support_after_decision")
+        else
+          translate("minos_moderation.flags.support")
+        end
       result =
         ::PostActionCreator.create(
           ::Discourse.system_user,
           post,
           :notify_moderators,
-          message: translate("minos_moderation.flags.support"),
+          message: message,
         )
       log("the support flag was not raised") unless result.success?
     rescue *ACTION_ERRORS, ::RateLimiter::LimitExceeded => e
@@ -488,7 +545,7 @@ module MinosModeration
       note(reviewable, note_text(done, verdict))
       masked = mask_note(done, verdict)
       note(reviewable, masked) if masked
-      note(reviewable, translate("minos_moderation.notes.support")) if done.support
+      note(reviewable, support_note(Decision.support_after_person?(done.reason))) if done.support
     end
 
     # The masked text for the moderators (shared plugin rule A2d): when an `ocenzurowane`
@@ -516,29 +573,34 @@ module MinosModeration
     #
     # @return [String] the note.
     def note_text(done, verdict)
-      header =
-        if verdict && verdict["status"] == "ocenione"
-          categories = Array(verdict["kategorie"])
-          listed =
-            if categories.empty?
-              translate("minos_moderation.notes.no_categories")
-            else
-              categories.join(", ")
-            end
-          translate(
-            "minos_moderation.notes.verdict",
-            werdykt: verdict["kwalifikacja"],
-            kategorie: listed,
-          )
-        else
-          translate("minos_moderation.notes.no_verdict")
-        end
-      parts = [header, translate("minos_moderation.actions.#{action_key(done)}")]
+      action = translate("minos_moderation.actions.#{action_key(done)}")
+      parts = [verdict_header(verdict), action]
       if done.reason != :verdict
         reason = translate("minos_moderation.reasons.#{done.reason}")
         parts << translate("minos_moderation.notes.reason", powod: reason)
       end
       parts.join(" ")
+    end
+
+    # @param verdict [Hash{String => Object}, nil] the verdict, when there is one.
+    # @return [String] the note's first sentence: the verdict and its categories.
+    def verdict_header(verdict)
+      unless verdict && verdict["status"] == "ocenione"
+        return translate("minos_moderation.notes.no_verdict")
+      end
+
+      categories = Array(verdict["kategorie"])
+      listed =
+        if categories.empty?
+          translate("minos_moderation.notes.no_categories")
+        else
+          categories.join(", ")
+        end
+      translate(
+        "minos_moderation.notes.verdict",
+        werdykt: verdict["kwalifikacja"],
+        kategorie: listed,
+      )
     end
 
     # @return [String] the action's text key; a publication by the failure mode says so.

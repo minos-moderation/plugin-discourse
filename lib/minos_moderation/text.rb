@@ -485,19 +485,30 @@ module MinosModeration
     # is not text a reader sees ({own_text?}; the full reduction sends it, as written).
     BBCODE_IMAGE = %r{\[img(?:=[^\]\n]*)?\][^\n]*?\[/img\]}i
 
-    # Lines that are Markdown's syntax and nothing else, which {own_text?} reads as no
-    # text (outside code and HTML blocks, where they are shown as written): a thematic
-    # break, a heading or a list item with nothing in it, and, only on the lines of a
-    # table markdown-it reads ({line_kinds}: a header over a delimiter row with as many
-    # cells, and its rows), a line of pipes, colons and dashes alone. Elsewhere such a line
-    # is a paragraph's text, `| - |` or `|---|` too, and is sent. Read last, after the other
-    # steps took the text out of them; each with the guard it is read under.
+    # Lines that are Markdown's syntax and show the reader no character, which
+    # {own_text?} reads as no text (outside code and HTML blocks, where they are shown as
+    # written): a thematic break (a rule) and a heading with nothing in it, each only where
+    # the line of the post holds nothing else ({bare_line?}: `*</span>` or `#<b></b>` is a
+    # paragraph showing its `*` or `#`); a table's delimiter row, only on the delimiter
+    # line of a table markdown-it reads ({line_kinds}: a header over a delimiter row with
+    # as many cells); and a line of pipes and blanks alone on any line of such a table, a
+    # row whose cells are all empty. Elsewhere such a line is a paragraph's text, `| - |`
+    # or `|---|` too, and is sent; so is a header's or a row's dash (`|---|` over a
+    # delimiter row is a header cell showing `---`), and an empty list item, whose bullet
+    # or number the reader sees. Punctuation the reader sees is text (shared plugin rule
+    # F7). Read last, after the other steps took the text out of them; each with the
+    # guard it is read under.
     EMPTY_BLOCKS = [
-      [/^[ \t]{0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/, :markdown], # a break
-      [/^[ \t]{0,3}\#{1,6}[ \t]*$/, :markdown], # an empty ATX heading
-      [/^[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]*$/, :markdown], # an empty list item
-      [/^[ \t|:-]*\|[ \t|:-]*$/, :table], # a table's delimiter row, or a row of empty cells
+      [/^[ \t]{0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/, :bare_line], # a break
+      [/^[ \t]{0,3}\#{1,6}[ \t]*$/, :bare_line], # an empty ATX heading
+      [/^[ \t|:-]*\|[ \t|:-]*$/, :delimiter], # a table's delimiter row
+      [/^[ \t|]*\|[ \t|]*$/, :table], # a line of a table whose cells are all empty
     ].freeze
+
+    # What may stand on a line before a {bare_line?} match: blockquote markers and blanks;
+    # after it, and between its characters, blanks only.
+    LINE_LEAD = /[ \t>]/
+    LINE_BLANK = /[ \t\r]/
 
     # What does not make a post a text to assess (shared plugin rule F7): format and
     # control characters (a zero-width space, a soft hyphen, a word joiner, a byte order
@@ -751,9 +762,10 @@ module MinosModeration
       reading = inline_reading(text, origins, lines, kinds, seen, source)
       reading.tables = {}
       lines.each_with_index do |(from, to), index|
-        next unless %i[table delimiter row].include?(kinds[index])
+        kind = kinds[index]
+        next unless %i[table delimiter row].include?(kind)
 
-        (from...to).each { |at| reading.tables[origins[at]] = true if origins[at] }
+        (from...to).each { |at| reading.tables[origins[at]] = kind if origins[at] }
       end
       [chars, origins, blocks, reading]
     end
@@ -819,11 +831,45 @@ module MinosModeration
         # A line of a table markdown-it reads ({line_kinds}), and nothing outside it.
         tables = reading.tables || {}
         ->(match, at) { (match.begin(0)...match.end(0)).all? { |index| tables[at[index]] } }
+      when :delimiter
+        # A table's delimiter row, never its header or a row, whose cells the reader sees.
+        tables = reading.tables || {}
+        lambda do |match, at|
+          (match.begin(0)...match.end(0)).all? { |index| tables[at[index]] == :delimiter }
+        end
+      when :bare_line
+        markdown = guard_for(:markdown, text, blocks, reading)
+        ->(match, at) { markdown.call(match, at) && bare_line?(match, at, reading.source) }
       when :paired_ends
         # A BBCode tag pair whose two tags Discourse pairs: the text between them is theirs.
         ->(match, at) { reading.paired[at[match.begin(0)]] && reading.paired[at[match.end(0) - 1]] }
       when :dropped
         ->(match, at) { reading.dropped[at[match.begin(0)]] }
+      end
+    end
+
+    # Whether a match is all that its line of the post holds, apart from blockquote markers
+    # and blanks: a line that only the reduction emptied around it (`*</span>`,
+    # `-<!-- -->--`) is a paragraph, which shows the reader its characters.
+    #
+    # @param match [MatchData] a match in the reduced text.
+    # @param at [Array<Integer, nil>] the reduced text's origins.
+    # @param source [Array<String>, nil] the characters the origins point at.
+    # @return [Boolean]
+    def self.bare_line?(match, at, source)
+      return false if source.nil?
+
+      taken = (match.begin(0)...match.end(0)).map { |index| at[index] }
+      return false if taken.empty? || taken.any?(&:nil?)
+
+      first, last = taken.minmax
+      start = first
+      start -= 1 while start.positive? && source[start - 1] != "\n"
+      finish = last + 1
+      finish += 1 while finish < source.length && source[finish] != "\n"
+      own = taken.to_h { |origin| [origin, true] }
+      (start...finish).all? do |index|
+        own[index] || (index < first ? LINE_LEAD : LINE_BLANK).match?(source[index].to_s)
       end
     end
 
@@ -2003,7 +2049,7 @@ module MinosModeration
                          :fence_content, :quote_markers, :fence_closed?, :html_start,
                          :inline_reading, :inline_bbcode, :paragraphs, :block_opener?, :inline_scan,
                          :bare_link, :markdown_link, :code_spans_within?, :link_shown?,
-                         :image_shown?, :reference_key, :guard_for, :escaped?, :delimiters?,
+                         :image_shown?, :reference_key, :guard_for, :bare_line?, :escaped?, :delimiters?,
                          :flanking, :spaced_image, :backtick_run, :walk_blocks, :bbcode_tag,
                          :inline_close, :block_close, :plugin_opener?, :block_tag?, :blank_from?,
                          :columns, :trim, :clean, :spaced, :js_number_string

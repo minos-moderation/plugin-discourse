@@ -519,6 +519,62 @@ RSpec.describe "MinosModeration::Decision" do
     end
   end
 
+  # Shared plugin rule A7: `wsparcie` reaches the moderators whatever the verdict, also
+  # after a person's decision; that decision is about the post, not about the signal.
+  describe "a support signal for a post decided before its verdict" do
+    let(:support) { verdict("zablokowane", "id" => "discourse:7.2", "wsparcie" => true) }
+    let(:decided) do
+      { "status" => "done", "outcome" => "resolved_elsewhere", "attempt" => 2, "verdict" => nil }
+    end
+
+    it "is taken for a finished entry without a verdict, whoever finished it" do
+      [
+        decided,
+        decided.merge("outcome" => "leave", "reason" => "timeout"),
+        decided.merge("outcome" => "leave", "reason" => "edited"),
+        decided.merge("outcome" => "leave", "reason" => "core_hold"),
+        decided.except("verdict"),
+      ].each do |entry|
+        expect(decision.late_support?(entry, support, 2)).to be(true), entry.inspect
+      end
+    end
+
+    it "is not taken without wsparcie, so such a verdict changes nothing" do
+      [false, nil, "true", 1].each do |value|
+        late = support.merge("wsparcie" => value)
+        expect(decision.late_support?(decided, late, 2)).to be(false), value.inspect
+      end
+    end
+
+    it "is taken once: an entry that holds a verdict, applied or signalled, takes none" do
+      signalled = decided.merge("verdict" => support.except("ocenzurowany"))
+      expect(decision.late_support?(signalled, support, 2)).to be(false)
+      applied = decided.merge("outcome" => "approve", "verdict" => verdict("bezpieczne"))
+      expect(decision.late_support?(applied, support, 2)).to be(false)
+    end
+
+    it "is not taken for a post still waiting, nor for another text" do
+      %w[queued sending submitted received auto_published].each do |status|
+        entry = decided.merge("status" => status)
+        expect(decision.late_support?(entry, support, 2)).to be(false), status
+      end
+      expect(decision.late_support?(decided, support, 1)).to be(false)
+      expect(decision.late_support?(decided, support, nil)).to be(false)
+      expect(decision.late_support?(nil, support, 2)).to be(false)
+      expect(decision.late_support?(decided, nil, 2)).to be(false)
+    end
+
+    it "says it came after a person's decision exactly when a person decided" do
+      expect(decision.support_after_person?(:edited)).to be(true)
+      expect(decision.support_after_person?("person_acted")).to be(true)
+      expect(decision.support_after_person?(nil, decided: true)).to be(true)
+      (decision::REASONS - %i[edited person_acted]).each do |reason|
+        expect(decision.support_after_person?(reason)).to be(false), reason.inspect
+      end
+      expect(decision.support_after_person?(nil)).to be(false)
+    end
+  end
+
   describe "what a pending entry needs" do
     let(:now) { 1_000_000 }
     let(:timeout) { 20 * 60 }
@@ -625,6 +681,17 @@ RSpec.describe "MinosModeration::Decision" do
         {},
       ]
       others.each { |entry| expect(decision.held_after_timeout?(entry)).to be(false), entry.inspect }
+    end
+
+    it "raises a lost support signal of a finished entry again, for a day, then purges it" do
+      due = { "status" => "done", "handled_at" => now - 60, "support_due" => now - 121 }
+      expect(needs(due)).to eq(:reapply)
+      expect(needs(due.merge("support_due" => now - 5))).to be_nil
+      expect(needs(due.merge("support_due" => now - (24 * 3600) - 1))).to be_nil
+      expect(needs(due.merge("support_due" => "#{now - 121}"))).to be_nil
+      # Only a finished entry: a post the failure mode published takes its verdict whole.
+      expect(needs(due.merge("status" => "auto_published"))).to be_nil
+      expect(needs(due.merge("handled_at" => now - (30 * 24 * 3600) - 1))).to eq(:purge)
     end
 
     it "applies a received verdict again when its job was lost" do
