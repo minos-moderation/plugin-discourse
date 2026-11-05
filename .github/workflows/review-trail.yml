@@ -1,0 +1,67 @@
+name: Review trail
+
+# A pull request that changes a path on the risk list is red here until it carries
+#   Review: <agent> @ <head SHA> — AKCEPTACJA
+# for its current head, in its description or a member's comment (the rule is "Reviews" in
+# minos-moderation/minos, docs/claude/sessions.md; the check and its exempt list are
+# .github/review-trail/). A push or an edit of the description runs it again; after a review
+# comment, re-run this job. The line is a trace, not a proof, while sessions and the owner
+# share one account.
+#
+# pull_request_target: this file, the check and its exempt list are the BASE branch's, so a
+# pull request cannot change what judges it. Nothing of the head is checked out or run: its
+# commits are fetched for the list of changed paths only, and the token reads, never writes.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+permissions:
+  contents: read
+  # The pull request's comments, read through the issues API, which takes this permission.
+  pull-requests: read
+
+concurrency:
+  group: review-trail-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  trail:
+    name: Review trail
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The base branch (pull_request_target's own ref), its whole history: the check runs
+      # from here, and the changed paths are those since the merge base.
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The head's commits as objects only — no checkout, no file of them read or run — for
+      # `git diff`. The token goes to that one fetch in a header and is kept nowhere.
+      # --no-renames: a file moved out of a risk path counts by its old path too. -z: every
+      # name as it is, NUL-ended (git would quote one with a byte outside ASCII or a quote).
+      - name: Check the review trail
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ && "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "::error::The event names no base or head commit."; exit 2; }
+          git cat-file -e "$BASE_SHA^{commit}"
+          auth=$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)
+          echo "::add-mask::${auth}"
+          git -c "http.${GITHUB_SERVER_URL:-https://github.com}/.extraheader=AUTHORIZATION: basic ${auth}" \
+            fetch --no-tags --quiet origin "$HEAD_SHA"
+          git diff -z --no-renames --name-only "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/paths.txt"
+          # The check prints the pull request's paths and logins (escaped, never at a line's
+          # start); the runner takes no command from it either, until the unguessable token
+          # resumes them, whatever the check's exit. The check itself writes no command.
+          token=$(python3 -I -c 'import secrets; print(secrets.token_hex(16))')
+          echo "::stop-commands::${token}"
+          status=0
+          python3 -I .github/review-trail/check.py --event "$GITHUB_EVENT_PATH" \
+            --paths "$RUNNER_TEMP/paths.txt" -z --exempt .github/review-trail/exempt-paths.txt || status=$?
+          echo "::${token}::"
+          exit "$status"

@@ -29,7 +29,9 @@ the gateway delivers to a signed webhook. Part of Minos; its backlog item is
   `spec/jobs` and `spec/integration` need Discourse's plugin harness. What each file of
   `lib/` may depend on: `lib/minos_moderation/CLAUDE.md`.
 - No real posts in tests: use the mock gateway from `minos-moderation/client-php`.
-- Never `git add -A`. Sessions open PRs; only the owner or the coordinating session merges.
+- Never `git add -A` (a hook refuses it). Sessions open PRs; only the owner or the
+  coordinating session merges, after `Review: <agent> @ <head SHA> — AKCEPTACJA`, which CI's
+  `Review trail` requires for any path outside `.github/review-trail/exempt-paths.txt`.
 - Model-pinned agents in `.claude/agents/`, copied from `client-php` and fitted to the
   plugin's paths (`programista-prosty`'s risk list above all).
 - This file stays small (`spec/repo/claude_rules_spec.rb` pins its size).
