@@ -297,6 +297,7 @@ RSpec.describe MinosModeration::WebhooksController do
     it "flags a post a moderator approved while its verdict was on the way" do
       reviewable.perform(Discourse.system_user, :approve_post)
       deliver(JSON.generate(support))
+      expect(response.status).to eq(200)
       post = published
       expect(support_flags(post).count).to eq(1)
       expect(post).not_to be_hidden
@@ -305,6 +306,7 @@ RSpec.describe MinosModeration::WebhooksController do
         "outcome" => "resolved_elsewhere",
       )
       deliver(JSON.generate(support))
+      expect(response.status).to eq(200)
       expect(support_flags(post.reload).count).to eq(1)
     end
 
@@ -321,6 +323,7 @@ RSpec.describe MinosModeration::WebhooksController do
     it "notes the signal on a post a moderator rejected, which stays rejected" do
       reviewable.perform(Discourse.system_user, :reject_post)
       deliver(JSON.generate(support))
+      expect(response.status).to eq(200)
       expect(reviewable.reload).to be_rejected
       expect(reviewable.target_id).to be_nil
       expect(notes).to include(a_string_including(after_note))
@@ -329,6 +332,7 @@ RSpec.describe MinosModeration::WebhooksController do
     it "notes the signal on a post a moderator edited in the queue, which stays held" do
       reviewable.update!(payload: reviewable.payload.merge("raw" => "Tekst poprawiony w kolejce."))
       deliver(JSON.generate(support))
+      expect(response.status).to eq(200)
       expect(reviewable.reload).to be_pending
       expect(notes).to include(after_note)
       expect(MinosModeration::Store.get(reviewable.id)).to include("reason" => "edited")
