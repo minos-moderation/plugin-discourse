@@ -2,11 +2,14 @@ name: Review trail
 
 # A pull request that changes a path on the risk list is red here until it carries
 #   Review: <agent> @ <head SHA> — AKCEPTACJA
-# for its current head, in its description or a member's comment (the rule is in this repository's
-# CLAUDE.md; the check and its exempt list are
-# .github/review-trail/). A push or an edit of the description runs it again; after a review
-# comment, re-run this job. The line is a trace, not a proof, while sessions and the owner
-# share one account.
+# for its current head, in its description or a comment, by someone who may push to the
+# repository (the rule is in this repository's CLAUDE.md; the check and its
+# exempt list are .github/review-trail/). Who may push is read live (the collaborators
+# API); the event's author_association is not used, because GitHub computes it for the app
+# that receives the event and it did not name the owner a member. The description and the
+# comments are read live too, so a re-run of this job sees a review comment; a push or an
+# edit of the description runs it again by itself. The line is a trace, not a proof, while
+# sessions and the owner share one account.
 #
 # pull_request_target: this file, the check and its exempt list are the BASE branch's, so a
 # pull request cannot change what judges it. Nothing of the head is checked out or run: its
@@ -17,7 +20,9 @@ on:
 
 permissions:
   contents: read
-  # The pull request's comments, read through the issues API, which takes this permission.
+  # The pull request and its comments (the comments through the issues API, which takes
+  # this permission). A login's permission (collaborators API) needs only `metadata: read`,
+  # which every token has whatever this block says.
   pull-requests: read
 
 concurrency:
