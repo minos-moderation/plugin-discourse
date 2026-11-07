@@ -84,8 +84,24 @@ RSpec.describe "The text sent for a post, against Discourse's own rendering" do
       end
     end
 
-  # Punctuation alone has no word to compare (`words` reads letters and digits): those
-  # controls are the standalone tier's.
+  # Punctuation alone has no word to compare (`words` reads letters and digits), so the
+  # property is checked as a character: Discourse shows the reader one (a text node that is
+  # not blank, or a list item's bullet or number, which the browser draws), and the plugin
+  # sends a text. The exact characters sent are the standalone tier's.
+  no_text
+    .select { |entry| entry["sends"] == true && entry["kind"] == "punctuation" }
+    .each do |entry|
+      it "shows a reader the punctuation it sends: #{entry["name"]}" do
+        cooked = PrettyText.cook(entry["raw"])
+        fragment = Nokogiri::HTML5.fragment(cooked)
+        fragment.css(chrome).each(&:remove)
+        shown = fragment.xpath(".//text()").map(&:text).join.gsub(/[[:space:]]/, "")
+        expect(shown.length + fragment.css("li").size).to be_positive,
+        "Discourse shows #{cooked.inspect}"
+        expect(MinosModeration::Text.for_submission(entry["raw"])[:text]).not_to be_empty
+      end
+    end
+
   no_text
     .select { |entry| entry["sends"] == true && entry["kind"] != "punctuation" }
     .each do |entry|
