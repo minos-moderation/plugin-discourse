@@ -234,7 +234,8 @@ reader can see is dropped; where removing something is not certain, more is sent
   address, title and label, tooltips, and the lines that are only Markdown's syntax and
   show the reader no character (`Text::EMPTY_BLOCKS`, outside code and HTML blocks: a
   thematic break or an empty heading where the post's line holds nothing else,
-  `Text.bare_line?`; a table's delimiter row, only on its delimiter line; a line of
+  `Text.bare_line?`, an empty heading with a closing sequence, `# #` or `> ## ##`,
+  `Text::CLOSED_HEADING`; a table's delimiter row, only on its delimiter line; a line of
   pipes and blanks, empty cells, on any line of a table markdown-it reads,
   `Reading#tables`). Punctuation the reader sees is text (F7) and is sent: outside a
   table `|`, `| - |` or `|---|` is a paragraph's text; a header's or a row's dashes

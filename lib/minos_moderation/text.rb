@@ -501,9 +501,14 @@ module MinosModeration
     EMPTY_BLOCKS = [
       [/^[ \t]{0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/, :bare_line], # a break
       [/^[ \t]{0,3}\#{1,6}[ \t]*$/, :bare_line], # an empty ATX heading
+      [/^[ \t]{0,3}(?:\#{1,6}[ \t]+)?\#+[ \t]*$/, :closed_heading], # `# #`: empty, closed
       [/^[ \t|:-]*\|[ \t|:-]*$/, :delimiter], # a table's delimiter row
       [/^[ \t|]*\|[ \t|]*$/, :table], # a line of a table whose cells are all empty
     ].freeze
+
+    # A line of the post that is an empty ATX heading with a closing sequence (`# #`,
+    # `## ##`, `> #  #`): markdown-it shows an empty heading, no `#` (CommonMark 4.2).
+    CLOSED_HEADING = /\A(?:[ \t]{0,3}>[ \t]?)*[ \t]{0,3}\#{1,6}[ \t]+\#+[ \t\r]*\z/
 
     # What may stand on a line before a {bare_line?} match: blockquote markers and blanks;
     # after it, and between its characters, blanks only.
@@ -840,6 +845,9 @@ module MinosModeration
         lambda do |match, at|
           (match.begin(0)...match.end(0)).all? { |index| tables[at[index]] == :delimiter }
         end
+      when :closed_heading
+        markdown = guard_for(:markdown, text, blocks, reading)
+        ->(match, at) { markdown.call(match, at) && closed_heading?(match, at, reading.source) }
       when :line_start
         ->(match, at) { line_start?(match, at, reading.source) }
       when :bare_line
@@ -851,6 +859,27 @@ module MinosModeration
       when :dropped
         ->(match, at) { reading.dropped[at[match.begin(0)]] }
       end
+    end
+
+    # Whether a match is what is left of a line of the post that is an empty heading with a
+    # closing sequence ({CLOSED_HEADING}): the `#` a reduction left there shows nothing.
+    #
+    # @param match [MatchData] a match in the reduced text.
+    # @param at [Array<Integer, nil>] the reduced text's origins.
+    # @param source [Array<String>, nil] the characters the origins point at.
+    # @return [Boolean]
+    def self.closed_heading?(match, at, source)
+      return false if source.nil?
+
+      taken = (match.begin(0)...match.end(0)).map { |index| at[index] }
+      return false if taken.empty? || taken.any?(&:nil?)
+
+      first, last = taken.minmax
+      start = first
+      start -= 1 while start.positive? && source[start - 1] != "\n"
+      finish = last + 1
+      finish += 1 while finish < source.length && source[finish] != "\n"
+      CLOSED_HEADING.match?(source[start...finish].join)
     end
 
     # Whether a match starts where its line of the post starts, after blanks and blockquote
@@ -2075,7 +2104,8 @@ module MinosModeration
                          :inline_reading, :inline_bbcode, :paragraphs, :block_opener?, :inline_scan,
                          :bare_link, :markdown_link, :code_spans_within?, :link_shown?,
                          :image_shown?, :reference_key, :guard_for, :bare_line?, :escaped?, :delimiters?,
-                         :line_start?, :flanking, :spaced_image, :backtick_run, :walk_blocks, :bbcode_tag,
+                         :line_start?, :closed_heading?, :flanking, :spaced_image,
+                         :backtick_run, :walk_blocks, :bbcode_tag,
                          :inline_close, :block_close, :plugin_opener?, :block_tag?, :blank_from?,
                          :columns, :trim, :clean, :spaced, :js_number_string
   end
