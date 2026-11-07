@@ -99,6 +99,24 @@ RSpec.describe "The text sent for a post, against Discourse's own rendering" do
       end
     end
 
+  # The S1 deviation of `docs/development.md` (minos-moderation/minos#136): next to other
+  # words, a BBCode link and a BBCode image are sent as written, address included, while
+  # Discourse shows the reader a link's label or an image, never the address.
+  {
+    "a BBCode link" => ["Zobacz [url=https://e.example/a]tutaj[/url] koniecznie", "a"],
+    "a BBCode image" => ["Zdanie [img]https://e.example/y.png[/img] dalej", "img"],
+  }.each do |what, (raw, element)|
+    it "shows no address of #{what} next to other words, which the plugin sends (S1 deviation)" do
+      cooked = PrettyText.cook(raw)
+      # The tag must be rendered as an element, or the address is text the reader sees.
+      rendered = Nokogiri::HTML5.fragment(cooked).css(element)
+      expect(rendered.map { |node| node["href"] || node["src"] }.join).to include("e.example"),
+      "Discourse shows #{cooked.inspect}"
+      expect(reader_view(cooked)).not_to include("e.example")
+      expect(MinosModeration::Text.for_submission(raw)[:text]).to include("https://e.example/")
+    end
+  end
+
   it "has the corpus the audit named, and more" do
     expect(corpus.size).to be >= 14
   end

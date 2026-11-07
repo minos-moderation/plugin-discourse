@@ -269,7 +269,9 @@ Do bramy trafia, dla każdego wstrzymanego posta:
   tytułach obrazków, żeby nie dało się niczego w nich ukryć. Kod (w blokach i między
   grawisami) idzie tak, jak jest zapisany, bo tak go widzi czytelnik. `[quote=…]`,
   którego Discourse nie pokazuje jako cytatu (np. w środku linii albo bez zamknięcia),
-  idzie dosłownie; tak samo link wpisany wprost (`https://…`) i treść bloku HTML.
+  idzie dosłownie; tak samo link wpisany wprost (`https://…`) i treść bloku HTML. Link
+  albo obrazek BBCode z adresem (`[url=https://…]opis[/url]`, `[img]https://…[/img]`)
+  stojący w linii obok innych słów też idzie dosłownie, razem z adresem.
   Podpowiedź, którą Discourse pokazuje po najechaniu kursorem (atrybut `title`), oraz
   adres, tytuł i etykieta linku zapisanego w Markdownie idą zaraz po słowie, w którym
   stoją, żeby go nie rozdzielić; innych atrybutów HTML (np. `href` w znaczniku `<a>`) wtyczka nie wysyła.
