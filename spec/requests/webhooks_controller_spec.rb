@@ -377,15 +377,17 @@ RSpec.describe MinosModeration::WebhooksController do
     end
   end
 
-  # Shared plugin rule F10: `PluginStore.set` answers `false` for a row it did not save. A
-  # verdict the plugin could not store gets no 2xx, so the gateway delivers it again.
+  # Shared plugin rule F10: `PluginStore.set` answers `false` for a row it did not save (its
+  # `row.save`). A verdict the plugin could not store gets no 2xx, so the gateway delivers
+  # it again. The row's own `save` fails here, as a refused write would, so the whole path
+  # through Discourse's `PluginStore.set` is the real one.
   it "answers 500, not 2xx, when the verdict could not be saved" do
-    allow(PluginStore).to receive(:set).and_call_original
-    allow(PluginStore).to receive(:set).with(
-      MinosModeration::PLUGIN_NAME,
-      "pending:#{reviewable.id}",
-      anything,
-    ).and_return(false)
+    allow_any_instance_of(PluginStoreRow).to receive(:save).and_return(false)
+    # The store itself refuses to go on, before any delivery.
+    expect { MinosModeration::Store.set(reviewable.id, { "status" => "received" }) }.to raise_error(
+      RuntimeError,
+      /was not saved/,
+    )
     expect_not_enqueued_with(job: :minos_apply_verdict) { deliver(JSON.generate(verdict)) }
     expect(response.status).to eq(500)
     expect(status).to eq("submitted")
