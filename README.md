@@ -306,10 +306,11 @@ błędu bramy, czasem do ponowienia, nazwą kroku, który się nie udał, i nazw
 Stan każdego wstrzymanego posta (czasy, próby, werdykt i skrót kryptograficzny treści)
 wtyczka trzyma w bazie forum (`PluginStore`) i usuwa po **30 dniach**. Werdykt
 `ocenzurowane` niesie wysłany tekst posta z fragmentami zamaskowanymi przez bramę: ten
-tekst wtyczka trzyma tylko do zastosowania werdyktu, najdłużej przez dobę, po której
-rezygnuje z werdyktu i go usuwa; w zapisanym stanie zostaje werdykt bez tego tekstu.
-Wyłączona wtyczka niczego nie usuwa — robi to po ponownym włączeniu. Oryginalnej treści
-posta wtyczka nie przechowuje wcale.
+tekst wtyczka trzyma tylko do zastosowania werdyktu, **najdłużej przez dobę**, a potem
+usuwa go ze stanu posta. Oba terminy obowiązują także przy wyłączonym ustawieniu
+`minos_enabled`: wyłączona wtyczka niczego nie wysyła ani nie stosuje, ale co 5 minut
+nadal usuwa dane starsze niż te terminy. Oryginalnej treści posta wtyczka nie
+przechowuje wcale.
 
 Dłużej niż 30 dni zostają wpisy w **rejestrach samego Discourse**, które powstają, gdy
 wtyczka działa — podlegają one zasadom przechowywania danych forum, a nie wtyczki, i

@@ -394,6 +394,27 @@ module MinosModeration
       now + retry_in > entry["queued_at"].to_i + timeout_s
     end
 
+    # What the plugin's own retention needs of an entry (shared plugin rule A8), which runs
+    # whatever the switch: a finished entry is forgotten after thirty days, and the
+    # gateway's masked text (`ocenzurowany`) of a received verdict goes once that verdict
+    # has waited longer than a day to be applied ({MAX_REAPPLY_S}). Nothing here touches a
+    # post; {for_entry} does the rest while the plugin is enabled.
+    #
+    # @param entry [Hash{String => Object}] the entry as `Store` keeps it.
+    # @param now [Integer] the clock, in seconds.
+    # @return [Symbol, nil] `:purge`, `:drop_masked` or nil.
+    def self.for_retention(entry, now:)
+      age = ->(field) { now - entry[field].to_i }
+      case entry["status"]
+      when "done", "auto_published"
+        :purge if age.call("handled_at") > PURGE_AFTER_S
+      when "received"
+        verdict = entry["verdict"]
+        masked = verdict.is_a?(Hash) && verdict.key?("ocenzurowany")
+        :drop_masked if masked && age.call("received_at") > MAX_REAPPLY_S
+      end
+    end
+
     # What a pending entry needs now; the sweeper's rules.
     #
     # @param entry [Hash{String => Object}] the entry as `Store` keeps it.
@@ -409,7 +430,7 @@ module MinosModeration
       age = ->(field) { now - entry[field].to_i }
       case entry["status"]
       when "done", "auto_published"
-        return :purge if age.call("handled_at") > PURGE_AFTER_S
+        return :purge if for_retention(entry, now: now) == :purge
         return nil unless entry["status"] == "done" && entry["support_due"].is_a?(Integer)
 
         waited = age.call("support_due")

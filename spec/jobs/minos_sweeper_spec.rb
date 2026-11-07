@@ -155,4 +155,39 @@ RSpec.describe Jobs::MinosSweeper do
     sweep
     expect(entry["status"]).to eq("submitted")
   end
+
+  # Shared plugin rule A8 holds whatever the switch: the README and the privacy notices
+  # promise 30 days, and at most a day for the gateway's masked text.
+  describe "while the plugin is disabled, its own retention" do
+    before { SiteSetting.minos_enabled = false }
+
+    it "forgets a finished entry after thirty days" do
+      store("status" => "done", "handled_at" => now - (31 * 24 * 3600))
+      sweep
+      expect(entry).to be_nil
+    end
+
+    it "drops the masked text of a verdict that waited over a day, and applies nothing" do
+      masked = {
+        "id" => "discourse:#{reviewable.id}",
+        "status" => "ocenione",
+        "kwalifikacja" => "ocenzurowane",
+        "kategorie" => [],
+        "ocenzurowany" => "#{MinosModeration::Text::MASK * 5} tekst",
+      }
+      store("status" => "received", "received_at" => now - (24 * 3600) - 1, "verdict" => masked)
+      expect_not_enqueued_with(job: :minos_apply_verdict) { sweep }
+      expect(entry["status"]).to eq("received")
+      expect(entry["verdict"]).to include("kwalifikacja" => "ocenzurowane")
+      expect(entry["verdict"]).not_to have_key("ocenzurowany")
+      expect(reviewable.reload).to be_pending
+    end
+
+    it "keeps a verdict's masked text for its first day" do
+      masked = { "status" => "ocenione", "kwalifikacja" => "ocenzurowane", "ocenzurowany" => "x" }
+      store("status" => "received", "received_at" => now - 3600, "verdict" => masked)
+      sweep
+      expect(entry["verdict"]).to have_key("ocenzurowany")
+    end
+  end
 end

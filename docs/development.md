@@ -159,7 +159,10 @@ and the verdict without its masked text, for 30 days. A table without dates
    resubmission of a due retry or of a send stuck for 2 min, a
    second application of a verdict whose job was lost after 2 min, giving up (a note, the
    post left) on a verdict that could not be applied for 24 h, and removal of a `done` or
-   `auto_published` entry after 30 days.
+   `auto_published` entry after 30 days. While the plugin is disabled, `Sweep.retain`
+   runs instead (`Decision.for_retention`, shared plugin rule A8): only that removal, and
+   the gateway's masked text dropped from a verdict received over 24 h ago; no post is
+   touched and the entry keeps its state.
 
 ### What `tekst` is
 
@@ -281,7 +284,8 @@ forum with `edit_history_visible_to_public`. Those, the plugin's notes on the re
 and the support flag are Discourse's own records: they follow the forum's retention,
 not the plugin's 30 days, and the README names them. The gateway's masked text
 (`ocenzurowany`) is kept in a `received` entry only until the verdict is applied, at most a
-day (`Decision::MAX_REAPPLY_S`, then `VerdictApplier#abandon`); the finished entry's verdict
+day (`Decision::MAX_REAPPLY_S`, then `VerdictApplier#abandon`, or `Sweep.retain` while the
+plugin is disabled, which drops it and leaves the entry `received`); the finished entry's verdict
 is stored without it (`VerdictApplier#stored`), and a verdict taken only for its support
 signal never keeps it (`Receiver.accept`). Every read-modify-write of an entry runs under a
 `DistributedMutex` per reviewable, so the job, the webhook and the sweeper never apply
@@ -305,7 +309,7 @@ and S8b.
 |---|---|---|
 | `F1` | fail-closed by default | `config/settings.yml` (`fail-closed`), `Decision.fail_open?` (anything else is closed); `spec/lib/decision_spec.rb` "never publishes a post without a known verdict unless fail-open is chosen exactly" |
 | `F2` | a time-out of at least 20 minutes | `Decision::MIN_TIMEOUT_MINUTES`, `Decision.timeout_s`, `min: 20`; `spec/repo/settings_yml_spec.rb`, `spec/jobs/minos_sweeper_spec.rb` "waits twenty minutes even when a lower timeout was stored" |
-| `F3` | switched off: 404, and nothing happens | `requires_plugin` (404), `Submission#run`, `Jobs::MinosSweeper`, `Jobs::MinosApplyVerdict` return while disabled; `spec/requests/webhooks_controller_spec.rb` "does not answer while the plugin is disabled", `spec/jobs/minos_sweeper_spec.rb` "does nothing while the plugin is disabled" |
+| `F3` | switched off: 404, and nothing happens | `requires_plugin` (404), `Submission#run` and `Jobs::MinosApplyVerdict` return while disabled; `Jobs::MinosSweeper` neither sends, applies nor times out (nothing held is released): only the plugin's own retention runs, `Sweep.retain` (A8, which the README and the privacy notices name without a condition, as in the WordPress, MyBB and phpBB plugins); `spec/requests/webhooks_controller_spec.rb` "does not answer while the plugin is disabled", `spec/jobs/minos_sweeper_spec.rb` "does nothing while the plugin is disabled", "while the plugin is disabled, its own retention" |
 | `F4` | 401 without a usable secret | `WebhooksController#receive`; `spec/requests/webhooks_controller_spec.rb` "is refused while no webhook secret is set" |
 | `F5a` | retry 429, 5xx, 408, network failures and a 2xx that accepts nothing; only `202` accepts | `Scores.classify`, `Scores.classify_transport`, the shared pause (`Store.pause`, `Decision.pause_until`, `Submission#defer`); `spec/lib/scores_spec.rb` "reads every status by the rule", `spec/jobs/minos_submit_spec.rb` "the pause every post shares after a refusal" |
 | `F5b` | any other 4xx is a configuration error | `Scores.classify`, `Submission#refused` (`Store.record_problem`, the dashboard, the failure mode `config`); `spec/jobs/minos_submit_spec.rb` "a configuration error" |
@@ -335,7 +339,7 @@ and S8b.
 | `A5` | a hold is the platform's own state | `ReviewableQueuedPost` (`NewPostManager#enqueue`); `spec/integration/new_post_handler_spec.rb` "holds a new reply as a queued post" |
 | `A6` | a late verdict also applies to a post the failure mode held | `Decision.held_after_timeout?`, `Receiver.accept`; `spec/jobs/minos_apply_verdict_spec.rb` "a verdict for a post the failure mode held after its time-out", `spec/requests/webhooks_controller_spec.rb` |
 | `A7` | `wsparcie` is an active signal for moderators, also after a person's decision, never an automatic removal | `VerdictApplier#signal_support` (a `notify_moderators` flag), `Decision` (never `reject` or `hide` with `wsparcie`); after a person's decision `Decision.late_support?`, `Receiver.accept`, `VerdictApplier#support_after` (a flag on a post a moderator approved, the note "po decyzji moderatora" on a rejected or queue-edited one; a deleted or hidden post cannot carry a flag, the note is its signal); `spec/jobs/minos_apply_verdict_spec.rb` "wsparcie on a published post", "still flags a post a moderator edited", `spec/requests/webhooks_controller_spec.rb` "a verdict with wsparcie after a moderator's decision", `spec/lib/decision_spec.rb` "wsparcie over every combination", "a support signal for a post decided before its verdict" |
-| `A8` | the plugin's own data (the original, the verdicts) is kept 30 days; the platform's records follow the forum's rules | `Decision::PURGE_AFTER_S`, `Sweep` (`purge`); the original only in Discourse's records, for staff (`PostRevisor#revise!(…, hidden: true)`); README "Co wtyczka przechowuje i jak długo"; `spec/jobs/minos_sweeper_spec.rb` "forgets a finished entry after thirty days", `spec/jobs/minos_apply_verdict_spec.rb` "keeps the original in a revision staff can see and readers cannot" |
+| `A8` | the plugin's own data (the original, the verdicts) is kept 30 days; the platform's records follow the forum's rules | `Decision::PURGE_AFTER_S`, `Decision.for_retention`, `Sweep` (`purge`; `Sweep.retain` also while disabled, which drops a verdict's `ocenzurowany` once it waited over a day); the original only in Discourse's records, for staff (`PostRevisor#revise!(…, hidden: true)`); README "Co wtyczka przechowuje i jak długo"; `spec/jobs/minos_sweeper_spec.rb` "forgets a finished entry after thirty days", "while the plugin is disabled, its own retention", `spec/lib/decision_spec.rb` "what the plugin's retention needs of an entry, whatever the switch", `spec/jobs/minos_apply_verdict_spec.rb` "keeps the original in a revision staff can see and readers cannot" |
 | `P1` | the archive carries no lock file, tests or mock, and pins the client | n/d: Discourse installs the plugin from its git repository, with no archive, and the plugin runs no client-php code |
 | `D1` | this file is the one source; `CLAUDE.md` points at it, `docs/development.md` maps it | `CLAUDE.md` (one line), this table; `spec/lib/compliance_table_spec.rb` |
 | `D2` | shared compliance scenarios in `scenarios/` | odstępstwo: client-php has no scenarios yet (minos-moderation/minos#44, step 5) |
