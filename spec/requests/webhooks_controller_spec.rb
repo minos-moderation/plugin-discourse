@@ -297,6 +297,7 @@ RSpec.describe MinosModeration::WebhooksController do
     it "flags a post a moderator approved while its verdict was on the way" do
       reviewable.perform(Discourse.system_user, :approve_post)
       deliver(JSON.generate(support))
+      expect(response.status).to eq(200)
       post = published
       expect(support_flags(post).count).to eq(1)
       expect(post).not_to be_hidden
@@ -305,6 +306,7 @@ RSpec.describe MinosModeration::WebhooksController do
         "outcome" => "resolved_elsewhere",
       )
       deliver(JSON.generate(support))
+      expect(response.status).to eq(200)
       expect(support_flags(post.reload).count).to eq(1)
     end
 
@@ -321,6 +323,7 @@ RSpec.describe MinosModeration::WebhooksController do
     it "notes the signal on a post a moderator rejected, which stays rejected" do
       reviewable.perform(Discourse.system_user, :reject_post)
       deliver(JSON.generate(support))
+      expect(response.status).to eq(200)
       expect(reviewable.reload).to be_rejected
       expect(reviewable.target_id).to be_nil
       expect(notes).to include(a_string_including(after_note))
@@ -329,6 +332,7 @@ RSpec.describe MinosModeration::WebhooksController do
     it "notes the signal on a post a moderator edited in the queue, which stays held" do
       reviewable.update!(payload: reviewable.payload.merge("raw" => "Tekst poprawiony w kolejce."))
       deliver(JSON.generate(support))
+      expect(response.status).to eq(200)
       expect(reviewable.reload).to be_pending
       expect(notes).to include(after_note)
       expect(MinosModeration::Store.get(reviewable.id)).to include("reason" => "edited")
@@ -371,6 +375,22 @@ RSpec.describe MinosModeration::WebhooksController do
       expect(response.status).to eq(200)
       expect(status).to eq("received")
     end
+  end
+
+  # Shared plugin rule F10: `PluginStore.set` answers `false` for a row it did not save (its
+  # `row.save`). A verdict the plugin could not store gets no 2xx, so the gateway delivers
+  # it again. The row's own `save` fails here, as a refused write would, so the whole path
+  # through Discourse's `PluginStore.set` is the real one.
+  it "answers 500, not 2xx, when the verdict could not be saved" do
+    allow_any_instance_of(PluginStoreRow).to receive(:save).and_return(false)
+    # The store itself refuses to go on, before any delivery.
+    expect { MinosModeration::Store.set(reviewable.id, { "status" => "received" }) }.to raise_error(
+      RuntimeError,
+      /was not saved/,
+    )
+    expect_not_enqueued_with(job: :minos_apply_verdict) { deliver(JSON.generate(verdict)) }
+    expect(response.status).to eq(500)
+    expect(status).to eq("submitted")
   end
 
   it "does not answer while the plugin is disabled" do

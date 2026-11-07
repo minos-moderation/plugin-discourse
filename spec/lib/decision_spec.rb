@@ -575,6 +575,38 @@ RSpec.describe "MinosModeration::Decision" do
     end
   end
 
+  # Shared plugin rule A8: the plugin's own retention, which runs also while it is disabled.
+  describe "what the plugin's retention needs of an entry, whatever the switch" do
+    let(:now) { 10_000_000 }
+    let(:day) { 24 * 3600 }
+
+    def retention(entry)
+      decision.for_retention(entry, now: now)
+    end
+
+    it "forgets a finished entry after thirty days, and only then" do
+      %w[done auto_published].each do |status|
+        expect(retention("status" => status, "handled_at" => now - (30 * day) - 1)).to eq(:purge)
+        expect(retention("status" => status, "handled_at" => now - (30 * day))).to be_nil
+      end
+    end
+
+    it "drops the masked text of a received verdict that waited longer than a day" do
+      masked = { "status" => "ocenione", "kwalifikacja" => "ocenzurowane", "ocenzurowany" => "x" }
+      waited = { "status" => "received", "received_at" => now - day - 1, "verdict" => masked }
+      expect(retention(waited)).to eq(:drop_masked)
+      expect(retention(waited.merge("received_at" => now - day))).to be_nil
+      expect(retention(waited.merge("verdict" => masked.except("ocenzurowany")))).to be_nil
+    end
+
+    it "asks nothing of an entry that is not finished or received" do
+      %w[queued sending submitted nieznany].each do |status|
+        entry = { "status" => status, "queued_at" => 0, "submitted_at" => 0, "handled_at" => 0 }
+        expect(retention(entry)).to be_nil, status
+      end
+    end
+  end
+
   describe "what a pending entry needs" do
     let(:now) { 1_000_000 }
     let(:timeout) { 20 * 60 }
@@ -683,11 +715,12 @@ RSpec.describe "MinosModeration::Decision" do
       others.each { |entry| expect(decision.held_after_timeout?(entry)).to be(false), entry.inspect }
     end
 
-    it "raises a lost support signal of a finished entry again, for a day, then purges it" do
+    it "raises a lost support signal of a finished entry again for a day, then gives it up" do
       due = { "status" => "done", "handled_at" => now - 60, "support_due" => now - 121 }
       expect(needs(due)).to eq(:reapply)
       expect(needs(due.merge("support_due" => now - 5))).to be_nil
-      expect(needs(due.merge("support_due" => now - (24 * 3600) - 1))).to be_nil
+      expect(needs(due.merge("support_due" => now - (24 * 3600)))).to eq(:reapply)
+      expect(needs(due.merge("support_due" => now - (24 * 3600) - 1))).to eq(:abandon)
       expect(needs(due.merge("support_due" => "#{now - 121}"))).to be_nil
       # Only a finished entry: a post the failure mode published takes its verdict whole.
       expect(needs(due.merge("status" => "auto_published"))).to be_nil

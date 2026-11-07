@@ -97,6 +97,42 @@ RSpec.describe Jobs::MinosSweeper do
     expect(entry).to include("status" => "done", "reason" => "apply_stuck")
   end
 
+  describe "a finished entry whose support signal waits (support_due)" do
+    let(:support) do
+      { "status" => "ocenione", "kwalifikacja" => "zablokowane", "wsparcie" => true }
+    end
+
+    def finished(due_at)
+      store(
+        "status" => "done",
+        "outcome" => "leave",
+        "reason" => "timeout",
+        "handled_at" => now - 3600,
+        "received_at" => due_at,
+        "support_due" => due_at,
+        "verdict" => support,
+      )
+    end
+
+    it "raises the signal again when its job was lost" do
+      finished(now - 300)
+      expect_enqueued_with(job: :minos_apply_verdict, args: { reviewable_id: reviewable.id }) do
+        sweep
+      end
+    end
+
+    it "gives the signal up after a day, with a warning in the log, and stops trying" do
+      finished(now - (24 * 3600) - 1)
+      allow(Rails.logger).to receive(:warn).and_call_original
+      expect_not_enqueued_with(job: :minos_apply_verdict) { sweep }
+      expect(Rails.logger).to have_received(:warn).with(a_string_including("given up"))
+      expect(entry).not_to have_key("support_due")
+      expect(entry["support_given_up_at"]).to be_a(Integer)
+      expect(entry).to include("status" => "done", "verdict" => support)
+      expect_not_enqueued_with(job: :minos_apply_verdict) { sweep }
+    end
+  end
+
   it "forgets a finished entry after thirty days, and keeps a recent one" do
     store("status" => "done", "handled_at" => now - (31 * 24 * 3600))
     sweep
@@ -118,5 +154,40 @@ RSpec.describe Jobs::MinosSweeper do
     store("status" => "submitted", "queued_at" => now, "submitted_at" => now - timeout - 1)
     sweep
     expect(entry["status"]).to eq("submitted")
+  end
+
+  # Shared plugin rule A8 holds whatever the switch: the README and the privacy notices
+  # promise 30 days, and at most a day for the gateway's masked text.
+  describe "while the plugin is disabled, its own retention" do
+    before { SiteSetting.minos_enabled = false }
+
+    it "forgets a finished entry after thirty days" do
+      store("status" => "done", "handled_at" => now - (31 * 24 * 3600))
+      sweep
+      expect(entry).to be_nil
+    end
+
+    it "drops the masked text of a verdict that waited over a day, and applies nothing" do
+      masked = {
+        "id" => "discourse:#{reviewable.id}",
+        "status" => "ocenione",
+        "kwalifikacja" => "ocenzurowane",
+        "kategorie" => [],
+        "ocenzurowany" => "#{MinosModeration::Text::MASK * 5} tekst",
+      }
+      store("status" => "received", "received_at" => now - (24 * 3600) - 1, "verdict" => masked)
+      expect_not_enqueued_with(job: :minos_apply_verdict) { sweep }
+      expect(entry["status"]).to eq("received")
+      expect(entry["verdict"]).to include("kwalifikacja" => "ocenzurowane")
+      expect(entry["verdict"]).not_to have_key("ocenzurowany")
+      expect(reviewable.reload).to be_pending
+    end
+
+    it "keeps a verdict's masked text for its first day" do
+      masked = { "status" => "ocenione", "kwalifikacja" => "ocenzurowane", "ocenzurowany" => "x" }
+      store("status" => "received", "received_at" => now - 3600, "verdict" => masked)
+      sweep
+      expect(entry["verdict"]).to have_key("ocenzurowany")
+    end
   end
 end

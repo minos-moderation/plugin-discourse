@@ -117,12 +117,14 @@ module MinosModeration
 
     # Gives up on a received verdict that could not be applied for a day
     # (`Decision::MAX_REAPPLY_S`): the post stays as it is, with a note, and the sweeper
-    # stops trying.
+    # stops trying. A finished entry's support signal that could not be raised for a day
+    # is given up too, with a warning in the log, never in silence.
     #
     # @return [void]
     def abandon
       Store.lock(@id) do
         entry = Store.get(@id)
+        next give_up_support(entry) if entry && entry["status"] == "done" && entry["support_due"]
         next unless entry && entry["status"] == "received"
 
         verdict = entry["verdict"].to_h
@@ -163,6 +165,17 @@ module MinosModeration
     def late_support(entry)
       support_after(entry, entry["verdict"].to_h)
       Store.set(@id, entry.except("support_due").merge("support_raised_at" => Time.now.to_i))
+    end
+
+    # Stops trying to raise a finished entry's support signal: the entry keeps the verdict,
+    # loses the mark, and records when the signal was given up. Runs under the lock.
+    #
+    # @param entry [Hash{String => Object}] the finished entry, with `support_due`.
+    # @return [void]
+    def give_up_support(entry)
+      log("the support signal could not be raised for a day and was given up")
+      given_up = { "support_given_up_at" => Time.now.to_i }
+      Store.set(@id, entry.except("support_due").merge(given_up))
     end
 
     # The support signal for a verdict that came after a person's decision or after the
@@ -354,7 +367,10 @@ module MinosModeration
     # group, never to the author. A post already deleted or hidden cannot carry one
     # (Discourse refuses a flag on a hidden post): the note on its review item is the
     # signal there. A flag Discourse refuses leaves the note alone; Discourse refuses a
-    # second flag by the same user on one post, so the flag is never doubled.
+    # second flag by the same user on one post, so the flag is never doubled. Any error
+    # of the flag is logged and taken as a refused flag: the note is already written, and
+    # an exception here would leave the entry as it was, for the sweeper to write the
+    # note again every five minutes.
     #
     # @param post [Post, nil] the published post.
     # @param after_decision [Boolean] whether the verdict came after a person's decision,
@@ -377,7 +393,7 @@ module MinosModeration
           message: message,
         )
       log("the support flag was not raised") unless result.success?
-    rescue *ACTION_ERRORS, ::RateLimiter::LimitExceeded => e
+    rescue StandardError => e
       log("raising the support flag raised #{e.class.name}")
     end
 

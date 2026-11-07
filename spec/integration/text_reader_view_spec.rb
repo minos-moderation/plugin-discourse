@@ -84,8 +84,24 @@ RSpec.describe "The text sent for a post, against Discourse's own rendering" do
       end
     end
 
-  # Punctuation alone has no word to compare (`words` reads letters and digits): those
-  # controls are the standalone tier's.
+  # Punctuation alone has no word to compare (`words` reads letters and digits), so the
+  # property is checked as a character: Discourse shows the reader one (a text node that is
+  # not blank, or a list item's bullet or number, which the browser draws), and the plugin
+  # sends a text. The exact characters sent are the standalone tier's.
+  no_text
+    .select { |entry| entry["sends"] == true && entry["kind"] == "punctuation" }
+    .each do |entry|
+      it "shows a reader the punctuation it sends: #{entry["name"]}" do
+        cooked = PrettyText.cook(entry["raw"])
+        fragment = Nokogiri::HTML5.fragment(cooked)
+        fragment.css(chrome).each(&:remove)
+        shown = fragment.xpath(".//text()").map(&:text).join.gsub(/[[:space:]]/, "")
+        expect(shown.length + fragment.css("li").size).to be_positive,
+        "Discourse shows #{cooked.inspect}"
+        expect(MinosModeration::Text.for_submission(entry["raw"])[:text]).not_to be_empty
+      end
+    end
+
   no_text
     .select { |entry| entry["sends"] == true && entry["kind"] != "punctuation" }
     .each do |entry|
@@ -98,6 +114,24 @@ RSpec.describe "The text sent for a post, against Discourse's own rendering" do
         "Discourse shows #{cooked.inspect}; the plugin sends #{sent.inspect}"
       end
     end
+
+  # The S1 deviation of `docs/development.md` (minos-moderation/minos#136): next to other
+  # words, a BBCode link and a BBCode image are sent as written, address included, while
+  # Discourse shows the reader a link's label or an image, never the address.
+  {
+    "a BBCode link" => ["Zobacz [url=https://e.example/a]tutaj[/url] koniecznie", "a"],
+    "a BBCode image" => ["Zdanie [img]https://e.example/y.png[/img] dalej", "img"],
+  }.each do |what, (raw, element)|
+    it "shows no address of #{what} next to other words, which the plugin sends (S1 deviation)" do
+      cooked = PrettyText.cook(raw)
+      # The tag must be rendered as an element, or the address is text the reader sees.
+      rendered = Nokogiri::HTML5.fragment(cooked).css(element)
+      expect(rendered.map { |node| node["href"] || node["src"] }.join).to include("e.example"),
+      "Discourse shows #{cooked.inspect}"
+      expect(reader_view(cooked)).not_to include("e.example")
+      expect(MinosModeration::Text.for_submission(raw)[:text]).to include("https://e.example/")
+    end
+  end
 
   it "has the corpus the audit named, and more" do
     expect(corpus.size).to be >= 14

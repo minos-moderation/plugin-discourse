@@ -145,7 +145,7 @@ przekierowaniami.
 | `minos_webhook_secret` | puste | Sekret, którym brama podpisuje dostawy. Bez niego żaden werdykt nie zostanie przyjęty, więc wtyczka niczego nie wysyła: nowe posty od razu przechodzą w tryb awarii. Pole tajne. |
 | `minos_profile` | `forum_adult` | Profil oceny: `forum_adult` (forum dla dorosłych) albo `forum_teen` (forum dla dzieci i młodzieży). Musi być na liście profili klucza. |
 | `minos_failure_mode` | `fail-closed` | Co zrobić z postem bez oceny: `fail-open` — opublikować, `fail-closed` — zostawić moderatorom. |
-| `minos_timeout_minutes` | `20` | Po ilu minutach bez werdyktu post jest traktowany jak nieoceniony. Najmniej 20: brama próbuje doręczać werdykt przez 15 minut, a wtyczka zostawia margines. Mniejsza wartość zapisana we wcześniejszej wersji działa jak 20. |
+| `minos_timeout_minutes` | `20` | Po ilu minutach bez werdyktu post jest traktowany jak nieoceniony. Najmniej 20: brama próbuje doręczać werdykt do chwili krótko przed upływem 15 minut od przyjęcia posta (przy domyślnych ustawieniach bramy około 12 minut), a wtyczka zostawia margines. Mniejsza wartość zapisana we wcześniejszej wersji działa jak 20. |
 | `minos_censored_action` | `publikuj_ocenzurowany` | Werdykt `ocenzurowane`: `publikuj_ocenzurowany` albo `zostaw_moderatorom`. |
 | `minos_blocked_action` | `zostaw_moderatorom` | Werdykt `zablokowane`: `zostaw_moderatorom` albo `odrzuc`. |
 | `minos_skip_staff` | włączone | Posty moderatorów i administratorów publikowane od razu, bez oceny. |
@@ -218,8 +218,9 @@ kolejce przeglądu dla moderatorów.
 Discourse ogranicza liczbę żądań z jednego adresu IP: domyślnie 50 na 10 sekund i 200 na
 minutę, w trybie `block`. Wszystkie dostawy werdyktów przychodzą z adresów bramy, więc
 liczą się do tego limitu. Przy nagłym wysypie postów część dostaw dostanie odpowiedź 429;
-brama ponawia je sama (po 5, 10, 20… sekundach, przez 15 minut), więc zwykle nic nie
-ginie — werdykt przychodzi tylko później. Na dużym forum, gdzie w ciągu 10 sekund może
+brama ponawia je sama (po 5, 10, 20… sekundach, do chwili krótko przed upływem 15 minut
+od przyjęcia posta, przy domyślnych ustawieniach bramy około 12 minut), więc zwykle nic
+nie ginie — werdykt przychodzi tylko później. Na dużym forum, gdzie w ciągu 10 sekund może
 powstać więcej niż kilkadziesiąt postów, podnieś limit w `containers/app.yml`, w sekcji
 `env`, i przebuduj kontener:
 
@@ -269,7 +270,9 @@ Do bramy trafia, dla każdego wstrzymanego posta:
   tytułach obrazków, żeby nie dało się niczego w nich ukryć. Kod (w blokach i między
   grawisami) idzie tak, jak jest zapisany, bo tak go widzi czytelnik. `[quote=…]`,
   którego Discourse nie pokazuje jako cytatu (np. w środku linii albo bez zamknięcia),
-  idzie dosłownie; tak samo link wpisany wprost (`https://…`) i treść bloku HTML.
+  idzie dosłownie; tak samo link wpisany wprost (`https://…`) i treść bloku HTML. Link
+  albo obrazek BBCode z adresem (`[url=https://…]opis[/url]`, `[img]https://…[/img]`)
+  stojący w linii obok innych słów też idzie dosłownie, razem z adresem.
   Podpowiedź, którą Discourse pokazuje po najechaniu kursorem (atrybut `title`), oraz
   adres, tytuł i etykieta linku zapisanego w Markdownie idą zaraz po słowie, w którym
   stoją, żeby go nie rozdzielić; innych atrybutów HTML (np. `href` w znaczniku `<a>`) wtyczka nie wysyła.
@@ -300,9 +303,14 @@ błędu bramy, czasem do ponowienia, nazwą kroku, który się nie udał, i nazw
 
 ### Co wtyczka przechowuje i jak długo
 
-Stan każdego wstrzymanego posta (czasy, próby, werdykt bez zamaskowanego tekstu i skrót
-kryptograficzny treści, nigdy sama treść) wtyczka trzyma w bazie forum (`PluginStore`) i
-usuwa po **30 dniach**. Oryginalnej treści posta wtyczka nie przechowuje wcale.
+Stan każdego wstrzymanego posta (czasy, próby, werdykt i skrót kryptograficzny treści)
+wtyczka trzyma w bazie forum (`PluginStore`) i usuwa po **30 dniach**. Werdykt
+`ocenzurowane` niesie wysłany tekst posta z fragmentami zamaskowanymi przez bramę: ten
+tekst wtyczka trzyma tylko do zastosowania werdyktu, **najdłużej przez dobę**, a potem
+usuwa go ze stanu posta. Oba terminy obowiązują także przy wyłączonym ustawieniu
+`minos_enabled`: wyłączona wtyczka niczego nie wysyła ani nie stosuje, ale co 5 minut
+nadal usuwa dane starsze niż te terminy. Oryginalnej treści posta wtyczka nie
+przechowuje wcale.
 
 Dłużej niż 30 dni zostają wpisy w **rejestrach samego Discourse**, które powstają, gdy
 wtyczka działa — podlegają one zasadom przechowywania danych forum, a nie wtyczki, i
