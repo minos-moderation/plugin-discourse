@@ -18,9 +18,11 @@ RSpec.describe "MinosModeration::Store" do
     end
   end
 
+  # rspec-mocks' own constant stub, reset after each example. Not `stub_const`: Discourse's
+  # spec helpers define a `stub_const(target, const, value) { … }` of their own.
   before do
-    stub_const("MinosModeration::PLUGIN_NAME", "minos-moderation")
-    stub_const("PluginStore", plugin_store)
+    RSpec::Mocks::ConstantMutator.stub("MinosModeration::PLUGIN_NAME", "minos-moderation")
+    RSpec::Mocks::ConstantMutator.stub("PluginStore", plugin_store)
   end
 
   it "raises when PluginStore did not save the entry" do
