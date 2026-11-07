@@ -47,11 +47,18 @@ module MinosModeration
       value.is_a?(Hash) ? value.to_h : nil
     end
 
+    # Writes an entry, or raises. `PluginStore.set` reports a row it did not save with
+    # `false` (`ActiveRecord#save`) rather than an exception; a caller that went on would
+    # answer the gateway `2xx` for a verdict it never stored (shared plugin rule F10).
+    #
     # @param id [Integer] a reviewable's id.
     # @param entry [Hash{String => Object}] its new entry.
     # @return [void]
+    # @raise [RuntimeError] when the row was not saved.
     def self.set(id, entry)
-      ::PluginStore.set(PLUGIN_NAME, key(id), entry)
+      return if ::PluginStore.set(PLUGIN_NAME, key(id), entry)
+
+      raise "#{PLUGIN_NAME}: the entry of reviewable #{Integer(id)} was not saved"
     end
 
     # @param id [Integer] a reviewable's id.

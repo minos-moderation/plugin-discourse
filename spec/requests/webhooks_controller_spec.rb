@@ -373,6 +373,20 @@ RSpec.describe MinosModeration::WebhooksController do
     end
   end
 
+  # Shared plugin rule F10: `PluginStore.set` answers `false` for a row it did not save. A
+  # verdict the plugin could not store gets no 2xx, so the gateway delivers it again.
+  it "answers 500, not 2xx, when the verdict could not be saved" do
+    allow(PluginStore).to receive(:set).and_call_original
+    allow(PluginStore).to receive(:set).with(
+      MinosModeration::PLUGIN_NAME,
+      "pending:#{reviewable.id}",
+      anything,
+    ).and_return(false)
+    expect_not_enqueued_with(job: :minos_apply_verdict) { deliver(JSON.generate(verdict)) }
+    expect(response.status).to eq(500)
+    expect(status).to eq("submitted")
+  end
+
   it "does not answer while the plugin is disabled" do
     SiteSetting.minos_enabled = false
     deliver(JSON.generate(verdict))
