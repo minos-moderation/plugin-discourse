@@ -56,5 +56,12 @@
   {"name": "dashes a comment splits, a paragraph", "raw": "-<!-- -->--", "sends": true, "kind": "punctuation", "words": ["---"]},
   {"name": "a hash before an empty tag, a paragraph", "raw": "#<b></b>", "sends": true, "kind": "punctuation", "words": ["#"]},
   {"name": "a table with text in a cell", "raw": "| a |\n|-|\n| słowo |", "sends": true, "kind": "text", "words": ["słowo"]},
-  {"name": "a letter with a combining accent", "raw": "e\u0301", "sends": true, "kind": "text", "words": ["e\u0301"]}
+  {"name": "a letter with a combining accent", "raw": "e\u0301", "sends": true, "kind": "text", "words": ["e\u0301"]},
+  {"name": "a hash after an empty tag, a paragraph", "raw": "<b></b>#  ", "sends": true, "kind": "punctuation", "words": ["#"]},
+  {"name": "hashes after a line break tag, a paragraph", "raw": "<br>###</span>\t", "sends": true, "kind": "punctuation", "words": ["###"]},
+  {"name": "hashes glued to an image, a paragraph", "raw": "##![](upload://abc.png)", "sends": true, "kind": "punctuation", "words": ["##"]},
+  {"name": "a quote marker after an empty BBCode pair, a paragraph", "raw": "[b][/b]>", "sends": true, "kind": "punctuation", "words": [">"]},
+  {"name": "a quote marker after a closing tag, a paragraph", "raw": "</span>> ", "sends": true, "kind": "punctuation", "words": [">"]},
+  {"name": "backticks after a closing tag, a paragraph", "raw": "</span>```", "sends": true, "kind": "punctuation", "words": ["```"]},
+  {"name": "tildes after an HTML comment, an HTML block", "raw": "<!-- -->~~~", "sends": true, "kind": "punctuation", "words": ["~~~"]}
 ]

@@ -536,6 +536,9 @@ module MinosModeration
     # lambda returns operations (`[:keep, from, to]`, `[:text, made_up]`, `[:after_word,
     # from, to]`, which keeps the characters after the word the match is in). A step marked
     # `:block` leaves a match as it is unless {block_tags} found a Discourse block there;
+    # one marked `:line_start` (a block's marker) leaves a match the reduction brought to the
+    # start of a line, which the post's line does not start with (`<b></b># x`, `</span>>`,
+    # `<br>```` are paragraphs showing `#`, `>` and the backticks: shared plugin rule F7);
     # one marked `:markdown` leaves a match that touches code or an HTML block's line
     # ({inline_reading}) as it is, and one marked `:emphasis` also a pair whose markers
     # markdown-it would not read as delimiters ({delimiters?}); one
@@ -545,7 +548,7 @@ module MinosModeration
     MARKUP = [
       [/(?<!\\)#{HTML_COMMENT.source}/m, [], :inline_html], # comments, with their text
       [/(?<!\\)(?:#{HTML_TAG.source})/, [TAG_PARTS], :inline_html], # tags (not escaped ones)
-      [FENCE_MARKER, [1]], # code fence markers (an info string stays)
+      [FENCE_MARKER, [1], :line_start], # code fence markers (an info string stays)
       [MD_IMAGE, [IMAGE_PARTS], :image], # image → its alt text and title, not its URL
       [MD_LINK, [LINK_PARTS], :link], # link → its text, then its URL, title and label
       [AUTOLINK, [1], :markdown], # `<https://…>` → the link without its brackets
@@ -555,8 +558,8 @@ module MinosModeration
       # quote → the title Discourse shows (not `post:`, `topic:` or `username:`)
       [BLOCK_BARE, [], :block], # `[quote]`, `[details]` and the closing tags of blocks
       [INLINE_BBCODE, [], :paired], # other BBCode tags, where Discourse pairs them
-      [/^[ \t]{0,3}\#{1,6}[ \t]+/, []], # ATX heading markers
-      [/^(?:[ \t]{0,3}>[ \t]?)+/, []], # blockquote markers
+      [/^[ \t]{0,3}\#{1,6}[ \t]+/, [], :line_start], # ATX heading markers
+      [/^(?:[ \t]{0,3}>[ \t]?)+/, [], :line_start], # blockquote markers
       [/[ \n`]/, [], :dropped], # a code span's backticks and the spaces markdown-it trims
       [
         /(?<!\\)\*\*(?![#{JS_SPACE}*])([^\n]*?[^#{JS_SPACE}*\\])\*\*/o,
@@ -837,6 +840,8 @@ module MinosModeration
         lambda do |match, at|
           (match.begin(0)...match.end(0)).all? { |index| tables[at[index]] == :delimiter }
         end
+      when :line_start
+        ->(match, at) { line_start?(match, at, reading.source) }
       when :bare_line
         markdown = guard_for(:markdown, text, blocks, reading)
         ->(match, at) { markdown.call(match, at) && bare_line?(match, at, reading.source) }
@@ -846,6 +851,26 @@ module MinosModeration
       when :dropped
         ->(match, at) { reading.dropped[at[match.begin(0)]] }
       end
+    end
+
+    # Whether a match starts where its line of the post starts, after blanks and blockquote
+    # markers at most, and is made of the post's characters only: a block's marker is one
+    # only there (`##![](x)` shows `##`, although the image leaves a made-up blank).
+    #
+    # @param match [MatchData] a match in the reduced text.
+    # @param at [Array<Integer, nil>] the reduced text's origins.
+    # @param source [Array<String>, nil] the characters the origins point at.
+    # @return [Boolean]
+    def self.line_start?(match, at, source)
+      return true if source.nil?
+
+      taken = (match.begin(0)...match.end(0)).map { |index| at[index] }
+      return false if taken.empty? || taken.any?(&:nil?)
+
+      first = taken.first
+      start = first
+      start -= 1 while start.positive? && !"\n\r".include?(source[start - 1].to_s)
+      (start...first).all? { |index| LINE_LEAD.match?(source[index].to_s) }
     end
 
     # Whether a match is all that its line of the post holds, apart from blockquote markers
@@ -2050,7 +2075,7 @@ module MinosModeration
                          :inline_reading, :inline_bbcode, :paragraphs, :block_opener?, :inline_scan,
                          :bare_link, :markdown_link, :code_spans_within?, :link_shown?,
                          :image_shown?, :reference_key, :guard_for, :bare_line?, :escaped?, :delimiters?,
-                         :flanking, :spaced_image, :backtick_run, :walk_blocks, :bbcode_tag,
+                         :line_start?, :flanking, :spaced_image, :backtick_run, :walk_blocks, :bbcode_tag,
                          :inline_close, :block_close, :plugin_opener?, :block_tag?, :blank_from?,
                          :columns, :trim, :clean, :spaced, :js_number_string
   end

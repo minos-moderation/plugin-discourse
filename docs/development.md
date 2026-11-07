@@ -241,9 +241,14 @@ reader can see is dropped; where removing something is not certain, more is sent
   (`|---|---|` over a delimiter row shows `---` in each header cell) are cells' text; an
   empty list item (`*`, `-`, `1.`) shows its bullet or number; and a line that only the
   reduction emptied (`*</span>`, `-<!-- -->--`, `#<b></b>`) is a paragraph showing its
-  characters. A lone fence (```` ``` ````, `~~~`, an empty code block) and a rule
-  (`------`) show no character and have no text; the fence markers go in every case
-  (`FENCE_MARKER`). When nothing of that is left but `Text::NOT_TEXT`
+  characters; so is a block's marker that the reduction brought to the start of a line
+  the post's line does not start with (`<b></b>#`, `##![](…)`, `</span>>`, `<!-- -->~~~`,
+  `</span>` before a fence's backticks): heading, blockquote and fence markers go only
+  where they open the post's line, after blanks and `>` (the `:line_start` guard,
+  `Text.line_start?`), which also keeps them in what is sent. A lone fence
+  (```` ``` ````, `~~~`, an empty code block) and a rule (`------`) show no character and
+  have no text; a fence's markers go wherever they open the line (`FENCE_MARKER`).
+  When nothing of that is left but `Text::NOT_TEXT`
   (format and control characters such as U+200B, U+00AD, U+2060, U+FEFF; separators and
   white space; lone combining marks such as U+034F or U+FE0F; the Hangul and Braille
   fillers; anything invisible by default), the sent text is empty, title included, and
