@@ -270,7 +270,11 @@ hidden revision of the post (a post masked after a fail-open publication,
 `PostRevisor#revise!(…, hidden: true)`) keep it where only staff can see it, also on a
 forum with `edit_history_visible_to_public`. Those, the plugin's notes on the review item
 and the support flag are Discourse's own records: they follow the forum's retention,
-not the plugin's 30 days, and the README names them. Every read-modify-write of an entry runs under a
+not the plugin's 30 days, and the README names them. The gateway's masked text
+(`ocenzurowany`) is kept in a `received` entry only until the verdict is applied, at most a
+day (`Decision::MAX_REAPPLY_S`, then `VerdictApplier#abandon`); the finished entry's verdict
+is stored without it (`VerdictApplier#stored`), and a verdict taken only for its support
+signal never keeps it (`Receiver.accept`). Every read-modify-write of an entry runs under a
 `DistributedMutex` per reviewable, so the job, the webhook and the sweeper never apply
 two outcomes to one post.
 
