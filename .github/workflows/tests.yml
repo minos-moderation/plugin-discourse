@@ -35,7 +35,7 @@ jobs:
         with:
           persist-credentials: false
           repository: minos-moderation/client-php
-          # client-php's main at e5df7d6 (v0.2.0): the mock (its masks keep the sent text's
+          # client-php at the tag v0.2.0 (e5df7d6): the mock (its masks keep the sent text's
           # length since f85c6ed) and docs/plugin-behaviour.md, the shared plugin rules the
           # compliance table of docs/development.md is checked against.
           ref: e5df7d6da76e4327838202f9325c5da8455820b9
