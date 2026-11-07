@@ -390,6 +390,52 @@ RSpec.describe Jobs::MinosApplyVerdict do
     expect(entry["outcome"]).to eq("resolved_elsewhere")
   end
 
+  # A verdict taken only for its support signal (shared plugin rule A7, `support_due`): the
+  # failure mode held the post, a moderator approved it, then `wsparcie` came.
+  describe "the support signal for a finished entry" do
+    let(:after_note) do
+      I18n.with_locale(SiteSetting.default_locale) do
+        I18n.t("minos_moderation.notes.support_after_decision")
+      end
+    end
+
+    before do
+      reviewable.perform(Discourse.system_user, :approve_post)
+      now = Time.now.to_i
+      MinosModeration::Store.set(
+        reviewable.id,
+        {
+          "status" => "done",
+          "outcome" => "leave",
+          "reason" => "timeout",
+          "handled_at" => now,
+          "received_at" => now,
+          "support_due" => now,
+          "text_digest" => sent[:digest],
+          "verdict" =>
+            assessed(
+              "zablokowane",
+              "id" => "discourse:#{reviewable.id}",
+              "kategorie" => ["samookaleczenie"],
+              "wsparcie" => true,
+            ),
+        },
+      )
+    end
+
+    def support_notes
+      reviewable.reload.reviewable_notes.map(&:content).count { |text| text.include?(after_note) }
+    end
+
+    it "notes the signal once when the flag fails with an unexpected error" do
+      allow(PostActionCreator).to receive(:create).and_raise(RuntimeError)
+      2.times { described_class.new.execute(reviewable_id: reviewable.id) }
+      expect(support_notes).to eq(1)
+      expect(entry).not_to have_key("support_due")
+      expect(entry["support_raised_at"]).to be_a(Integer)
+    end
+  end
+
   describe "a late verdict for a post the failure mode published" do
     let(:post) { Post.find(reviewable.target_id) }
 

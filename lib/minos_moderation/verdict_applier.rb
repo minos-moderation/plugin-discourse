@@ -354,7 +354,10 @@ module MinosModeration
     # group, never to the author. A post already deleted or hidden cannot carry one
     # (Discourse refuses a flag on a hidden post): the note on its review item is the
     # signal there. A flag Discourse refuses leaves the note alone; Discourse refuses a
-    # second flag by the same user on one post, so the flag is never doubled.
+    # second flag by the same user on one post, so the flag is never doubled. Any error
+    # of the flag is logged and taken as a refused flag: the note is already written, and
+    # an exception here would leave the entry as it was, for the sweeper to write the
+    # note again every five minutes.
     #
     # @param post [Post, nil] the published post.
     # @param after_decision [Boolean] whether the verdict came after a person's decision,
@@ -377,7 +380,7 @@ module MinosModeration
           message: message,
         )
       log("the support flag was not raised") unless result.success?
-    rescue *ACTION_ERRORS, ::RateLimiter::LimitExceeded => e
+    rescue StandardError => e
       log("raising the support flag raised #{e.class.name}")
     end
 
