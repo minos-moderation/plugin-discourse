@@ -683,11 +683,12 @@ RSpec.describe "MinosModeration::Decision" do
       others.each { |entry| expect(decision.held_after_timeout?(entry)).to be(false), entry.inspect }
     end
 
-    it "raises a lost support signal of a finished entry again, for a day, then purges it" do
+    it "raises a lost support signal of a finished entry again for a day, then gives it up" do
       due = { "status" => "done", "handled_at" => now - 60, "support_due" => now - 121 }
       expect(needs(due)).to eq(:reapply)
       expect(needs(due.merge("support_due" => now - 5))).to be_nil
-      expect(needs(due.merge("support_due" => now - (24 * 3600) - 1))).to be_nil
+      expect(needs(due.merge("support_due" => now - (24 * 3600)))).to eq(:reapply)
+      expect(needs(due.merge("support_due" => now - (24 * 3600) - 1))).to eq(:abandon)
       expect(needs(due.merge("support_due" => "#{now - 121}"))).to be_nil
       # Only a finished entry: a post the failure mode published takes its verdict whole.
       expect(needs(due.merge("status" => "auto_published"))).to be_nil

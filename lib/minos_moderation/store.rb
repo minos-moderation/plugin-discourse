@@ -16,10 +16,11 @@ module MinosModeration
   #   `truncated` (what the current attempt sent, without the text); `digests` (every
   #   attempt's text digest, by attempt number as a String); `verdict` (the parsed payload,
   #   minus `ocenzurowany` once applied); `support_due` (when a verdict with `wsparcie`
-  #   was taken for a finished entry, until its signal is raised: `support_raised_at`;
-  #   `Decision.late_support?`); `original_digest` (never the unmasked text; an
-  #   entry written before S8b may also have `original_title_digest`); `post_id` (of a post the failure mode published); `outcome` and
-  #   `reason` (what was done, and why).
+  #   was taken for a finished entry, until its signal is raised: `support_raised_at`,
+  #   or given up after a day: `support_given_up_at`; `Decision.late_support?`);
+  #   `original_digest` (never the unmasked text; an entry written before S8b may also
+  #   have `original_title_digest`); `post_id` (of a post the failure mode published);
+  #   `outcome` and `reason` (what was done, and why).
   #
   # Plus, for the admin dashboard, `problem` (the gateway's last refusal of the forum's
   # configuration) and `limit` (the gateway's last "not before T": a daily limit or an

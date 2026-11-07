@@ -404,7 +404,7 @@ module MinosModeration
     #   applied), `:abandon` (a received verdict could not be applied for a day: leave the
     #   post to the moderators), `:purge` (a finished entry is old) or nil (nothing yet).
     #   A finished entry whose support signal ({late_support?}) waits for a lost job is
-    #   `:reapply` too, for a day.
+    #   `:reapply` too, for a day, then `:abandon`: the signal is given up, and logged.
     def self.for_entry(entry, now:, timeout_s:)
       age = ->(field) { now - entry[field].to_i }
       case entry["status"]
@@ -413,7 +413,9 @@ module MinosModeration
         return nil unless entry["status"] == "done" && entry["support_due"].is_a?(Integer)
 
         waited = age.call("support_due")
-        :reapply if waited > REAPPLY_AFTER_S && waited <= MAX_REAPPLY_S
+        return :abandon if waited > MAX_REAPPLY_S
+
+        :reapply if waited > REAPPLY_AFTER_S
       when "received"
         return :abandon if age.call("received_at") > MAX_REAPPLY_S
 

@@ -97,6 +97,42 @@ RSpec.describe Jobs::MinosSweeper do
     expect(entry).to include("status" => "done", "reason" => "apply_stuck")
   end
 
+  describe "a finished entry whose support signal waits (support_due)" do
+    let(:support) do
+      { "status" => "ocenione", "kwalifikacja" => "zablokowane", "wsparcie" => true }
+    end
+
+    def finished(due_at)
+      store(
+        "status" => "done",
+        "outcome" => "leave",
+        "reason" => "timeout",
+        "handled_at" => now - 3600,
+        "received_at" => due_at,
+        "support_due" => due_at,
+        "verdict" => support,
+      )
+    end
+
+    it "raises the signal again when its job was lost" do
+      finished(now - 300)
+      expect_enqueued_with(job: :minos_apply_verdict, args: { reviewable_id: reviewable.id }) do
+        sweep
+      end
+    end
+
+    it "gives the signal up after a day, with a warning in the log, and stops trying" do
+      finished(now - (24 * 3600) - 1)
+      allow(Rails.logger).to receive(:warn).and_call_original
+      expect_not_enqueued_with(job: :minos_apply_verdict) { sweep }
+      expect(Rails.logger).to have_received(:warn).with(a_string_including("given up"))
+      expect(entry).not_to have_key("support_due")
+      expect(entry["support_given_up_at"]).to be_a(Integer)
+      expect(entry).to include("status" => "done", "verdict" => support)
+      expect_not_enqueued_with(job: :minos_apply_verdict) { sweep }
+    end
+  end
+
   it "forgets a finished entry after thirty days, and keeps a recent one" do
     store("status" => "done", "handled_at" => now - (31 * 24 * 3600))
     sweep

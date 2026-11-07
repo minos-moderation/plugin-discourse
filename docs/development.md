@@ -148,8 +148,11 @@ and the verdict without its masked text, for 30 days. A table without dates
    (`minos_moderation.notes.support_after_decision`, `flags.support_after_decision`),
    and the post stays exactly as the person left it. The signal is raised once: the
    entry keeps the verdict, so a repeated delivery is dropped, a lost job is re-run by
-   the sweeper for a day (`support_due`), and Discourse refuses a second flag by the
-   same user on a post.
+   the sweeper for a day (`support_due`; after that day the signal is given up with a
+   warning in the log, `support_given_up_at`), and Discourse refuses a second flag by
+   the same user on a post. A flag that fails, whatever the error, is logged and leaves
+   the note as the signal (`VerdictApplier#signal_support`), so the sweeper never
+   writes the note twice.
 6. `Sweep` applies `Decision.for_entry` to every entry: the failure mode after
    `minos_timeout_minutes` (never under `Decision::MIN_TIMEOUT_MINUTES`, 20, also for a
    lower value stored before that minimum: Discourse checks `min` only on write), a

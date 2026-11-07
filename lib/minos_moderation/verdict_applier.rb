@@ -117,12 +117,14 @@ module MinosModeration
 
     # Gives up on a received verdict that could not be applied for a day
     # (`Decision::MAX_REAPPLY_S`): the post stays as it is, with a note, and the sweeper
-    # stops trying.
+    # stops trying. A finished entry's support signal that could not be raised for a day
+    # is given up too, with a warning in the log, never in silence.
     #
     # @return [void]
     def abandon
       Store.lock(@id) do
         entry = Store.get(@id)
+        next give_up_support(entry) if entry && entry["status"] == "done" && entry["support_due"]
         next unless entry && entry["status"] == "received"
 
         verdict = entry["verdict"].to_h
@@ -163,6 +165,17 @@ module MinosModeration
     def late_support(entry)
       support_after(entry, entry["verdict"].to_h)
       Store.set(@id, entry.except("support_due").merge("support_raised_at" => Time.now.to_i))
+    end
+
+    # Stops trying to raise a finished entry's support signal: the entry keeps the verdict,
+    # loses the mark, and records when the signal was given up. Runs under the lock.
+    #
+    # @param entry [Hash{String => Object}] the finished entry, with `support_due`.
+    # @return [void]
+    def give_up_support(entry)
+      log("the support signal could not be raised for a day and was given up")
+      given_up = { "support_given_up_at" => Time.now.to_i }
+      Store.set(@id, entry.except("support_due").merge(given_up))
     end
 
     # The support signal for a verdict that came after a person's decision or after the
